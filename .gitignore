@@ -1,0 +1,15 @@
+/target
+/src-tauri/target
+/node_modules
+/dist
+/src-tauri/gen
+/.vite
+*.log
+.DS_Store
+# TypeScript incremental build cache (tsc -b)
+*.tsbuildinfo
+# Local UI preview harness: throwaway browser profile + generated screenshots.
+# Screenshots used by the README are copied to docs/screenshots/ and are NOT
+# ignored on purpose — commit those.
+tools/preview/.edge-profile/
+tools/preview/shots/

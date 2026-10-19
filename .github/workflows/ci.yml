@@ -1,0 +1,63 @@
+# CleanSweep — continuous integration
+# =============================================================================
+# Runs on pushes to main/master and on every pull request:
+#   - pnpm install (frozen lockfile) + frontend production build
+#   - cargo check + cargo test --lib for the Tauri backend
+# No release is published here — that is handled by release.yml on v* tags.
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs for the same branch/PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Frontend build & Rust checks
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Cargo test (lib)
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml
