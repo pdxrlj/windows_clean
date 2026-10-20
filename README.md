@@ -246,6 +246,7 @@ make build    # 本地构建前端 + Tauri 安装包（NSIS / MSI）
 make check    # 前端构建 + Rust 单元测试
 ```
 
+> 如果分支已推送、但 tag 推送因网络/TLS 波动失败，修复网络后重新执行同一条命令即可：脚本检测到版本号已匹配时会跳过提交，并自动重试 3 次推送 tag。  
 > 首次使用前，请先把 `Makefile`、`tools/tag-release.ps1` 以及当前改动提交到仓库——脚本会拒绝有未提交修改的工作区，避免发版内容被漏掉。  
 > Windows 需要 GNU Make：Git Bash 一般自带；也可以 `choco install make` 或 `scoop install make`。  
 > 没有 make 时可直接运行：  

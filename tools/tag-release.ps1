@@ -106,14 +106,19 @@ foreach ($file in @("package.json", "src-tauri/tauri.conf.json")) {
     $path = (Resolve-Path -LiteralPath $file).Path
     $text = [System.IO.File]::ReadAllText($path)
     $regex = [regex]'(?m)^(\s*"version"\s*:\s*")[^"]*(")'
-    $replacement = '${1}' + $semver + '${2}'
-    $newText = $regex.Replace($text, $replacement, 1)
-    if ($newText -eq $text) {
+    if (-not $regex.IsMatch($text)) {
         Fail "未在 $file 中找到顶层 version 字段（格式可能已变化）。"
     }
-    Write-Utf8NoBom $path $newText
-    $changedFiles += $file
-    Info "已更新 $file → $semver"
+    $replacement = '${1}' + $semver + '${2}'
+    $newText = $regex.Replace($text, $replacement, 1)
+    if ($newText -ne $text) {
+        Write-Utf8NoBom $path $newText
+        $changedFiles += $file
+        Info "已更新 $file → $semver"
+    }
+    else {
+        Info "$file 已经是 $semver，跳过"
+    }
 }
 
 # 4.2 Cargo.toml：只替换 [package] 段内的 version
@@ -132,13 +137,18 @@ $head = $cargo.Substring(0, $pkgIndex)
 $section = $cargo.Substring($pkgIndex, $sectionEnd - $pkgIndex)
 $tail = $cargo.Substring($sectionEnd)
 $cargoVersionRegex = [regex]'(?m)^(version\s*=\s*")[^"]*(")'
-$newSection = $cargoVersionRegex.Replace($section, ('${1}' + $semver + '${2}'), 1)
-if ($newSection -eq $section) {
+if (-not $cargoVersionRegex.IsMatch($section)) {
     Fail "未在 src-tauri/Cargo.toml 的 [package] 段中找到 version。"
 }
-Write-Utf8NoBom $cargoPath.Path ($head + $newSection + $tail)
-$changedFiles += "src-tauri/Cargo.toml"
-Info "已更新 src-tauri/Cargo.toml → $semver"
+$newSection = $cargoVersionRegex.Replace($section, ('${1}' + $semver + '${2}'), 1)
+if ($newSection -ne $section) {
+    Write-Utf8NoBom $cargoPath.Path ($head + $newSection + $tail)
+    $changedFiles += "src-tauri/Cargo.toml"
+    Info "已更新 src-tauri/Cargo.toml → $semver"
+}
+else {
+    Info "src-tauri/Cargo.toml 已经是 $semver，跳过"
+}
 
 # 4.3 Cargo.lock：同步 windows-clean 包版本（存在才改，避免 cargo 构建后产生额外改动）
 $lockPath = Resolve-Path -LiteralPath "src-tauri/Cargo.lock" -ErrorAction SilentlyContinue
@@ -150,6 +160,9 @@ if ($lockPath) {
         Write-Utf8NoBom $lockPath.Path $newLock
         $changedFiles += "src-tauri/Cargo.lock"
         Info "已更新 src-tauri/Cargo.lock → $semver"
+    }
+    else {
+        Info "src-tauri/Cargo.lock 已经是 $semver，跳过"
     }
 }
 
@@ -163,18 +176,22 @@ if ($pkg.version -ne $semver -or $conf.version -ne $semver -or -not $cargoMatch.
 }
 Info "版本号校验通过：$semver"
 
-# 6. 检查确实有版本变更，避免重复发同一版本
-$versionDiff = & git status --porcelain -- @changedFiles
-if ($LASTEXITCODE -ne 0) {
-    Fail "无法读取版本文件状态。"
+# 6. 检查确实有版本变更；没有变更时进入“补推 tag”模式
+$versionDiff = $null
+if ($changedFiles.Count -gt 0) {
+    $versionDiff = & git status --porcelain -- @changedFiles
+    if ($LASTEXITCODE -ne 0) {
+        Fail "无法读取版本文件状态。"
+    }
 }
-if (-not $versionDiff) {
-    Fail "版本号已经是 $semver，没有需要提交的变更。若只想补打 tag，请手动执行 git tag -a $tag -m 'Release $tag' 并推送。"
-}
-
 if ($DryRun) {
-    Info "dry-run：以下文件将改为 $semver（随后还原）"
-    & git diff --stat -- @changedFiles
+    if ($versionDiff) {
+        Info "dry-run：以下文件将改为 $semver（随后还原）"
+        & git diff --stat -- @changedFiles
+    }
+    else {
+        Info "dry-run：版本号已经是 $semver，不会产生版本提交，只会补推 tag"
+    }
     foreach ($file in $changedFiles) {
         & git checkout -- $file
         if ($LASTEXITCODE -ne 0) {
@@ -186,17 +203,23 @@ if ($DryRun) {
     exit 0
 }
 
-# 7. 提交 + 推送分支 + 打 tag + 推送 tag
-Info "提交版本变更…"
-foreach ($file in $changedFiles) {
-    & git add -- $file
+# 7. 提交（如有变更）+ 推送分支 + 打 tag + 推送 tag
+if ($versionDiff) {
+    Info "提交版本变更…"
+    foreach ($file in $changedFiles) {
+        & git add -- $file
+        if ($LASTEXITCODE -ne 0) {
+            Fail "git add $file 失败。"
+        }
+    }
+    & git commit -m "release: $tag"
     if ($LASTEXITCODE -ne 0) {
-        Fail "git add $file 失败。"
+        Fail "git commit 失败（请检查 git user.name / user.email 配置）。"
     }
 }
-& git commit -m "release: $tag"
-if ($LASTEXITCODE -ne 0) {
-    Fail "git commit 失败（请检查 git user.name / user.email 配置）。"
+else {
+    # 例如：版本提交已推送，但上次 tag 推送因网络失败。此时直接补推 tag。
+    Write-Host "! 版本号已经是 $semver，跳过版本提交（补推 tag 模式）" -ForegroundColor Yellow
 }
 
 Info "推送分支 $branch…"
@@ -206,14 +229,30 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Info "创建并推送 tag $tag…"
+$existingTag = & git rev-parse -q --verify "refs/tags/$tag" 2>$null
+if ($existingTag) {
+    Fail "本地已存在 tag $tag，请先删除或换版本号。"
+}
 & git tag -a $tag -m "Release $tag"
 if ($LASTEXITCODE -ne 0) {
     Fail "创建 tag 失败。"
 }
-& git push origin $tag
-if ($LASTEXITCODE -ne 0) {
+
+$tagPushed = $false
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+    & git push origin $tag
+    if ($LASTEXITCODE -eq 0) {
+        $tagPushed = $true
+        break
+    }
+    if ($attempt -lt 3) {
+        Write-Host "! 推送 tag 失败（第 $attempt 次，可能是网络/TLS 波动），2 秒后重试…" -ForegroundColor Yellow
+        Start-Sleep -Seconds 2
+    }
+}
+if (-not $tagPushed) {
     & git tag -d $tag *> $null
-    Fail "推送 tag 失败，已删除本地 tag。分支已推送，修复后重试即可。"
+    Fail "推送 tag 失败（已重试 3 次），已删除本地 tag。分支已推送；修复网络/代理后重新执行 make tag $tag 即可（版本号已是 $semver 时会跳过提交，直接补推 tag）。"
 }
 
 Write-Host ""
