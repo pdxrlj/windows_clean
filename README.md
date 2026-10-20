@@ -1,202 +1,291 @@
 # CleanSweep
 
-> AI 辅助的 Windows 卸载、残留清理与权限管理工具。Tauri 2 + React + Rust，本地优先，AI 可选。
+**更安全的 Windows 卸载与清理工具——先让 AI 看清楚，再动手清理。**
 
-Windows 10 / 11 (x64) · 需要管理员权限 · 单文件界面 · 无遥测、无云端上传
+CleanSweep 是一款面向普通用户的 Windows 桌面工具：列出电脑上安装的软件，帮你把软件卸载干净，清理残留文件与注册表，并管理应用的联网、系统权限和开机自启。所有删除操作都必须由你确认；AI 只给建议，不会替你做决定。
+
+> AI-assisted Windows uninstaller & cleaner. Local-first, confirmation-first, AI optional.
+
+Windows 10 / 11（x64）· 需要管理员权限 · 无需注册账号 · AI 功能可选
 
 ---
 
-## 截图
+## 它解决什么问题
 
-**软件列表 + 受保护条目识别 + AI 用途/风险分析**
+Windows 自带的"卸载"经常留下三类东西：
 
-![软件列表与 AI 分析](docs/screenshots/apps-list.png)
-![AI 分析软件用途与卸载风险](docs/screenshots/apps-ai-analysis.png)
+1. **目录残留**：`Program Files`、`ProgramData`、`AppData` 里的应用目录；
+2. **注册表残留**：软件在 `HKCU/HKLM\SOFTWARE` 下留下的配置键；
+3. **后台残留**：卸载后还在的自启项、服务或计划任务。
 
-**卸载前 AI 风险检查 → 卸载 → 扫描残留 → AI 判断是否卸载干净 → 删除后复查**
+CleanSweep 的流程是：**卸载前让 AI 评估风险 → 运行官方卸载程序 → 扫描残留并展示"到底要清理哪些目录/数据" → AI 判断是否卸载干净 → 你逐项勾选确认 → 删除后自动复查**。
 
-![卸载前 AI 风险检查](docs/screenshots/uninstall-ai-risk.png)
-![卸载后 AI 判断是否卸载干净](docs/screenshots/uninstall-ai-clean-check.png)
-![删除后复查残留](docs/screenshots/uninstall-post-check.png)
+---
 
-**应用权限：防火墙联网控制 / Store 能力 / 自启动管理**
+## 界面截图
+
+### 软件列表与 AI 分析
+
+列出已安装软件、发布者、版本、来源和大小；系统组件/更新/驱动/运行库会标记为「受保护」，禁止卸载。
+
+![软件列表](docs/screenshots/apps-list.png)
+
+选中软件后，可让 AI 解释它的用途、卸载风险、依赖项和替代品。
+
+![AI 分析软件](docs/screenshots/apps-ai-analysis.png)
+
+### 卸载前：AI 风险检查 + 清理范围说明
+
+打开卸载向导会自动让 AI 评估卸载风险（低/中/高/极高、依赖、可能受影响的组件），高风险需要你额外确认。**扫描 / 清理范围默认展开**，包含当前软件的已知安装目录与各类数据位置；需要勾选「我已了解扫描 / 清理范围」后才能开始卸载。
+
+向导还会显示**实际会执行的卸载命令**（来自软件注册信息）。静默卸载默认不勾选；如果这条命令本身带有 `/SILENT`、`/VERYSILENT` 等参数，会明确提示"这是软件自带的静默参数，CleanSweep 不会修改它"。
+
+![卸载前 AI 检查与清理范围](docs/screenshots/uninstall-ai-risk.png)
+
+### 卸载后：展示要清理的目录与数据
+
+扫描完成后，先按"程序目录 / 公共数据 / 用户数据 / 开始菜单 / 注册表 / 服务"分组展示**每一项涉及的位置、数量和占用空间**，再列出具体条目。每一类都可以一键全选/取消，顶部支持全选/清空，具体条目仍可逐项勾选——**确认哪些内容会被清理后再删除**。
+
+![清理范围与残留明细](docs/screenshots/uninstall-cleanup-scope.png)
+
+### 删除后自动复查
+
+清理完成会自动再扫描一次：显示「已卸载干净」，或提示还有多少残留并允许继续清理。
+
+![清理后复查](docs/screenshots/uninstall-post-check.png)
+
+### 应用权限管理
+
+**联网控制**：为指定程序添加/恢复 Windows 防火墙阻止规则。  
+**Store 能力**：控制 Store/UWP 应用的位置、摄像头、麦克风等权限（允许/拒绝/询问）。  
+**自启动**：管理注册表 Run/RunOnce 与计划任务，可禁用（备份后可恢复）或删除。
 
 ![防火墙联网控制](docs/screenshots/permissions-firewall.png)
-![Store 应用能力限制](docs/screenshots/permissions-capability.png)
+![Store 应用能力](docs/screenshots/permissions-capability.png)
 ![自启动管理](docs/screenshots/permissions-autostart.png)
 
-**AI 设置：服务商预设、自动获取模型、环境变量、连接测试、高级参数**
+### AI 设置（可选）
+
+内置 OpenAI / DeepSeek / OpenRouter / 通义千问 / Ollama / LM Studio 预设；自动获取模型列表，支持环境变量和自定义 Base URL，API Key 只保存在本机。
 
 ![AI 设置](docs/screenshots/settings-ai.png)
-![环境变量优先模式](docs/screenshots/settings-ai-env.png)
+![环境变量模式](docs/screenshots/settings-ai-env.png)
 
 ---
 
-## 功能
+## 清理范围与数据说明
 
-### 软件管理
+这是 CleanSweep 最重要的部分：**它到底会看什么、动什么、不会动什么。**
 
-- **软件枚举**：注册表 Uninstall 键（HKLM 64/32 位、HKCU）+ Store/MSIX 应用列表，显示发布者、版本、来源、安装大小与日期。
-- **搜索 / 来源过滤**：按名称或发布者搜索，按当前用户 / 本机 / Store / 系统组件过滤。
-- **受保护条目识别**：系统组件、Windows 更新/补丁（KB）、驱动包、.NET / VC++ 运行库、内置浏览器、不可移除的 Store 系统/框架包会标记为「受保护」，**界面禁用卸载，后端也会再次拒绝**。
-- **安全卸载**：卸载前 AI 风险评估 → 运行官方卸载程序（优先生成静默串）→ 自动扫描残留 → AI 判断是否卸载干净 → 逐项确认删除 → 删除后自动复查。
+### 扫描的位置
 
-### 卸载与残留清理
-
-- 卸载串只使用后端按 app id 重新枚举得到的系统数据；拒绝 `cmd/powershell/脚本/系统目录程序/UNC` 等危险入口；`msiexec` 仅允许 System32 下 `/x`；Store 包会实时复核是否为系统/框架/不可移除包。
-- 残留扫描覆盖：安装目录、Program Files / ProgramData / LocalAppData / Roaming、开始菜单快捷方式、`HKCU/HKLM\SOFTWARE` 应用专属键、非系统服务、非 Windows 内置计划任务。
-- **卸载前 AI 风险检查**（打开向导自动执行）：风险等级、依赖、受影响组件、建议；高风险必须勾选确认后才能继续。
-- **卸载后 AI 判断是否干净**：扫描后自动逐项评估（可删/谨慎/保留/未知）并给出总体结论；支持「勾选 AI 建议可删项」（仍需用户确认）。
-- **清理后自动复查**：删除完成后再次扫描，显示「已卸载干净」或「仍有 N 项残留」，可继续清理。
-- AI 只作为建议层：**不自动勾选、不自动删除**。
-
-### 应用权限
-
-- **防火墙联网控制**：为指定 exe 添加/移除 Windows 防火墙出入站阻止规则（`CleanSweep_Block_*`），可在本页恢复；拒绝操作 Windows 系统程序。
-- **Store 应用能力**：通过 ConsentStore 控制位置/摄像头/麦克风/账户信息等 capability（允许 / 拒绝 / 询问），未设置过的能力也可首次设置。
-- **自启动管理**：扫描注册表 Run/RunOnce 与计划任务；可禁用（注册表备份为 `disabled_` 前缀 / 任务 `/DISABLE`）或永久删除；只允许操作固定的 Run 键，Windows 内置任务受保护。
-
-### AI 配置
-
-- 预设 OpenAI / DeepSeek / OpenRouter / 通义千问 / Ollama / LM Studio / 自定义，自动填入 Base URL、当前模型与环境变量名。
-- Base URL 自动补全（可省略 `https://` 与 `/v1`），模型列表**自动获取**并可直接选择，也可手动填写。
-- 支持「环境变量优先（取不到回退静态值）」并显示脱敏后的探测结果。
-- 连接测试只使用当前表单值，不保存、不改变启用状态，失败时给出 401/404/超时/模型名等排查提示。
-- 高级参数：temperature（0~2）、请求超时（5~600 秒）。
-- 配置文件：`%APPDATA%\CleanSweep\ai_config.json`（原子写入、旧配置兼容、损坏自动备份 `.bak`），API Key 仅本地保存。
-
-### 安全护栏（防止误删系统）
-
-- 删除只接受**本次扫描确认过**的残留 id（服务端索引），前端传入的路径/类型一律忽略；删除前逐项重新校验。
-- 路径校验会 canonicalize 真实路径，拒绝 junction/symlink/重解析点、8.3 短名、结尾点/空格、UNC 与 `\\?\` 前缀；目录树含链接时拒绝整目录删除。
-- 注册表只允许 `HKCU/HKLM\SOFTWARE` 下的应用专属键，禁止 `Microsoft`、`Classes`、`Policies`、`CurrentVersion`、`Uninstall` 等系统子树。
-- 服务/任务删除前从注册表重读真实 `ImagePath`、重新确认任务存在；关键服务与 `\Microsoft\*` 任务受保护。
-- 不直接运行前端传入的任何命令/路径；系统工具全部使用绝对路径调用。
-
----
-
-## 下载安装
-
-从 GitHub **Releases** 下载：
-
-| 文件 | 说明 |
+| 位置 | 说明 |
 | --- | --- |
-| `CleanSweep_<version>_x64-setup.exe` | NSIS 安装包（推荐） |
-| `CleanSweep_<version>_x64_en-US.msi` | MSI 安装包（适合企业部署） |
+| 安装目录 | 注册表 `InstallLocation` 记录的软件安装目录 |
+| Program Files / Program Files (x86) | 与应用同名的厂商目录或应用目录 |
+| ProgramData | 公共应用数据目录（仅应用专属子目录） |
+| LocalAppData / Roaming | 当前用户的软件数据目录（仅应用专属子目录） |
+| 开始菜单 Programs | 与应用相关的快捷方式（仅 `.lnk`） |
+| 注册表 | `HKCU/HKLM\SOFTWARE` 下与应用同名的专属键，以及厂商键下的应用子键 |
+| 服务 | 可执行文件不在 Windows 目录、且不是系统关键服务的服务 |
+| 计划任务 | 非 Windows 内置任务（`\Microsoft\*` 一律排除） |
+
+### 删除前的保护规则
+
+CleanSweep 会**主动排除**以下内容，即使扫描规则误判也不会展示或删除：
+
+- Windows 系统目录（`C:\Windows`、System32、WinSxS、WindowsApps、Common Files 等）；
+- 注册表中的 `Microsoft`、`Classes`、`Policies`、`CurrentVersion\Uninstall` 等系统子树；
+- 系统关键服务（RPC、DCOM、EventLog、Defender、防火墙等）与驱动服务；
+- `\Microsoft\...` 下的 Windows 内置计划任务；
+- 系统组件、Windows 更新/补丁（KB）、驱动包、.NET/VC++ 运行库、内置浏览器、不可移除的 Store 系统包。
+
+此外，所有路径在删除前都会解析真实位置，拒绝 junction/符号链接、8.3 短名、结尾点/空格、UNC 和 `\\?\` 前缀；只有本次扫描确认过的条目才允许删除，前端传入的路径不会被直接信任。
+
+### AI 会看到什么
+
+只有配置并启用 AI 时才会发起请求，发送内容仅限：
+
+- 软件名、发布者、版本、安装目录、卸载串；
+- 待评估的残留项：路径、类型、大小等元信息；
+- 你当前配置的服务商地址与模型名。
+
+**不会上传文件内容，也没有账号或遥测。** API Key 只保存在本机配置文件中，调用 AI 时只会作为鉴权信息发送给你自己配置的服务商。AI 的返回只用于展示风险与建议，不会自动勾选或自动删除。
+
+配置文件位置：`%APPDATA%\CleanSweep\ai_config.json`（仅本地；原子写入，损坏会自动备份为 `.bak`）。
+
+---
+
+## 下载与安装
+
+从 GitHub **Releases** 下载最新版本：
+
+| 文件 | 适用场景 |
+| --- | --- |
+| `CleanSweep_<version>_x64-setup.exe` | 普通用户，双击安装（推荐） |
+| `CleanSweep_<version>_x64_en-US.msi` | 企业批量部署 / MSI 安装 |
 | `CleanSweep.exe` | 免安装绿色版 |
 
-**系统要求**：Windows 10 1809+ / Windows 11，x64；WebView2 运行时（Win11 自带，旧版 Win10 安装程序会自动处理）。
+安装或运行后，Windows 会请求管理员权限（UAC）。这是必要的，因为卸载 HKLM 软件、删除 Program Files/注册表、修改防火墙都需要管理员权限。
 
-> 程序以管理员权限运行（manifest `requireAdministrator`），因为卸载 HKLM 软件、删除 Program Files/注册表、防火墙规则都需要管理员权限。安装包未做代码签名，首次运行 SmartScreen 可能提示，选择「更多信息 → 仍要运行」。
+> 当前安装包**未做代码签名**，SmartScreen 可能提示"Windows 已保护你的电脑"。点击「更多信息 → 仍要运行」即可。  
+> 系统要求：Windows 10 1809+ / Windows 11，x64；WebView2 运行时（Win11 自带）。
 
 ---
 
-## 从源码运行
+## 使用指南（推荐流程）
 
-### 依赖
+1. **配置 AI（可选但推荐）**：设置 → AI，选一个服务商，填 API Key，点「测试连接」，保存。Ollama / LM Studio 本地服务可以不填 Key。
+2. **选择软件**：软件管理 → 搜索/筛选 → 选中要卸载的软件。
+3. **卸载前检查**：点「卸载」，向导会先显示 AI 风险评估和默认展开的扫描/清理范围；勾选「我已了解扫描/清理范围」后才能开始，高风险还需额外确认。
+4. **运行卸载**：优先使用软件自带的静默卸载参数；没有则运行交互式卸载器。
+5. **查看清理范围**：卸载完成后扫描残留，先看「本次将清理的目录与数据」总览（可按类别全选/清空），再逐项勾选具体条目。
+6. **确认删除**：点「删除选中」，确认对话框会再次列出分组和全部路径。
+7. **复查**：完成后自动复查，显示「已卸载干净」或仍需清理的项目。
+8. **权限管理（可选）**：应用权限页可禁止程序联网、调整 Store 能力、禁用自启动。
 
-- Node.js 20+ 与 [pnpm](https://pnpm.io/)
-- Rust stable（`rustup`）+ MSVC 工具链（Visual Studio Build Tools，勾选「使用 C++ 的桌面开发」）
+---
+
+## 常见问题
+
+**Q：AI 是必需的吗？**  
+不是。不配置 AI 时，软件列表、卸载、残留扫描、清理、权限管理都正常可用，只是没有卸载前风险提示和残留 AI 判断。
+
+**Q：为什么需要管理员权限？**  
+卸载系统级软件、删除 `Program Files`/`HKLM` 注册表、修改防火墙规则都需要。程序启动时会请求 UAC，拒绝则只能查看、无法执行清理。
+
+**Q：提示 "请求的操作需要提升（os error 740）" 怎么办？**  
+说明当前进程没有管理员权限。CleanSweep **启动时会主动弹 UAC 请求管理员权限**；如果你当时点了「否」，就会以普通权限运行，卸载器需要提权时便会报 740。重新启动程序并在 UAC 弹框选择「是」即可；也可以在「以管理员身份运行」的终端里执行 `pnpm tauri dev`。安装版（release）自带 `requireAdministrator` manifest，双击启动同样会弹 UAC。
+
+**Q：会不会把 Windows 系统文件删掉？**  
+CleanSweep 对系统目录、系统注册表、关键服务、Windows 内置任务和系统组件都有硬性保护；但删除操作不可撤销，请在确认前仔细核对路径。建议先在虚拟机或系统快照中试用。
+
+**Q：为什么有些软件显示「受保护」不能卸载？**  
+系统组件、更新补丁、驱动、.NET/VC++ 运行库、内置浏览器、不可移除的 Store 系统包被标记为受保护。卸载它们可能导致其他软件或系统功能异常，因此界面和后端都会拒绝。
+
+**Q：卸载后还有残留怎么办？**  
+在向导里重新扫描；被占用/需要重启的文件会在复查中提示，可重启后再次清理。
+
+**Q：需要联网吗？**  
+除 AI 功能和"获取模型列表"外，其他功能完全本地运行。程序启动时不再加载外部字体/资源。
+
+**Q：为什么取消勾选"静默卸载"还是没弹出卸载界面？**  
+"静默"可能来自软件自己的注册表卸载命令。CleanSweep 会在向导里显示**实际会执行的命令**；如果它本身包含 `/SILENT`、`/VERYSILENT` 等参数，即使取消勾选也会静默执行——这是软件自带的卸载命令，CleanSweep 不会修改它。只有软件额外提供了 `QuietUninstallString` 时，向导里的"优先使用静默卸载命令"才会切换到另一条命令。
+
+**Q：卸载/删除能撤销吗？**  
+不能。文件删除不可恢复；自启动"禁用"会保留可恢复的备份，但"删除"不可撤销。请按需勾选。
+
+---
+
+## 从源码构建
+
+### 环境要求
+
+- Node.js 20+、[pnpm](https://pnpm.io/)
+- Rust stable（rustup）+ Visual Studio Build Tools（勾选「使用 C++ 的桌面开发」）
 - WebView2 Runtime
 
 ```bash
 pnpm install
-# 开发模式（Vite + Tauri 窗口，debug 不请求提权）
+
+# 开发模式（Vite + Tauri 窗口）
+# 启动时会自动弹 UAC 请求管理员权限；取消则继续以普通权限运行（顶部提示）。
 pnpm tauri dev
-# 仅构建前端
+
+# 构建前端
 pnpm build
-# 构建 Windows 安装包（release 会嵌入 requireAdministrator）
+
+# 构建 Windows 安装包（release 版本会嵌入 requireAdministrator，自动请求 UAC）
 pnpm tauri build
 ```
 
-产物位置：`src-tauri/target/release/windows-clean.exe`（可执行文件）以及 `src-tauri/target/release/bundle/{msi,nsis}/`。
+产物：
+
+- `src-tauri/target/release/windows-clean.exe`（主程序）
+- `src-tauri/target/release/bundle/msi/*.msi`
+- `src-tauri/target/release/bundle/nsis/*-setup.exe`
 
 ---
 
-## 发布：推送 tag 自动打包 exe
+## 发布：推送 tag 自动打包
 
-仓库内置两个 GitHub Actions：
+仓库内置 GitHub Actions：
 
-| Workflow | 触发 | 作用 |
+| 工作流 | 触发 | 作用 |
 | --- | --- | --- |
-| `.github/workflows/release.yml` | 推送 `v*` tag | 在 `windows-latest` 上构建并创建 GitHub Release，上传 MSI / NSIS 安装包 / 绿色版 exe |
-| `.github/workflows/ci.yml` | push 到 `main`/`master`、PR | `pnpm build` + `cargo check` + `cargo test --lib` |
+| `.github/workflows/release.yml` | 推送 `v*` tag | 在 `windows-latest` 构建并创建 GitHub Release，上传 MSI / NSIS 安装包 / 绿色版 exe |
+| `.github/workflows/ci.yml` | push 到 `main`/`master`、PR | 前端构建 + Rust 检查 + 单元测试 |
 
 ### 发布步骤
 
-1. 一次性设置：仓库 **Settings → Actions → General → Workflow permissions** 选择 **Read and write permissions**（否则无法创建 Release）。
-2. 同步版本号（三处保持一致）：
-   - `package.json` 的 `version`
-   - `src-tauri/tauri.conf.json` 的 `version`
-   - `src-tauri/Cargo.toml` 的 `version`
-3. 提交并推送后打 tag：
+1. 仓库 **Settings → Actions → General → Workflow permissions** 设为 **Read and write permissions**。
+2. 同步 3 处版本号：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`。
+3. 提交后打 tag：
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-推送 tag 后，Release 会自动创建并附带：
+Release 会自动生成并附带：
 
-- `CleanSweep_0.1.0_x64_en-US.msi`
-- `CleanSweep_0.1.0_x64-setup.exe`（NSIS）
+- `CleanSweep_0.1.0_x64-setup.exe`（NSIS 安装包）
+- `CleanSweep_0.1.0_x64_en-US.msi`（MSI）
 - `CleanSweep.exe`（绿色版）
 
-> 可选：代码签名/自动更新需要额外配置 `TAURI_SIGNING_PRIVATE_KEY` 等 secrets，并在 workflow 中启用；当前模板未开启。
+> 代码签名/自动更新暂未启用；可在 workflow 中配置 `TAURI_SIGNING_PRIVATE_KEY` 等 secrets。
 
 ---
 
-## 配置 AI（可选）
+## 安全与隐私承诺
 
-1. 打开「设置 → AI」，选择服务商预设（如 DeepSeek），填入 API Key；Ollama / LM Studio 等本地服务可留空 Key。
-2. 点「测试连接」确认可用（只测试当前表单值，不保存）。
-3. 保存后：软件详情页可「AI 分析用途与风险」；卸载向导会自动做卸载前风险检查与卸载后残留判断。
+- 所有破坏性操作（卸载、删除文件/目录/注册表/服务/任务、修改防火墙、禁自启动）都需要你确认。
+- AI 只提供建议，**不会自动勾选、不会自动删除**。
+- 不收集账号、不上传文件内容、无遥测。
+- API Key 与配置只保存在本机 `%APPDATA%\CleanSweep\ai_config.json`。
+- 扫描/删除路径经过多轮安全校验，系统目录与系统组件默认拒绝。
 
-未配置 AI 时，软件枚举、卸载、残留扫描、权限管理全部照常工作，只是没有 AI 提示。
+### 已知限制
+
+- 安装包未签名，SmartScreen 会提示。
+- 部分卸载器会启动子进程后立即退出，残留扫描可能早于卸载完成；向导会在卸载后等待并复查，如仍有残留可重新扫描。
+- "最近卸载"记录只保存在当前会话内存中；重启后无法继续对已卸载软件做残留复查。
+- 严格 CSP 尚未启用；建议只从 Releases 下载并使用。
+- 建议先在虚拟机/系统快照中验证，再用于重要环境。
 
 ---
 
-## 项目结构
+## 技术栈与项目结构
+
+- Tauri 2 + Rust（Windows API / 注册表 / 服务 / 防火墙 / Store）
+- React 18 + TypeScript + Vite
+- OpenAI 兼容 AI 接口（可选，不绑定特定厂商）
 
 ```
-.
-├─ .github/workflows/        GitHub Actions（release.yml / ci.yml）
-├─ docs/screenshots/         README 截图
-├─ src/                      React 前端
-│  ├─ views/                 软件管理 / 卸载向导 / 权限 / 设置
-│  ├─ components/            Confirm 弹窗、Toast
-│  ├─ bindings.ts            Tauri 命令封装与类型
-│  └─ styles.css             设计系统（深色仪器风）
-├─ src-tauri/                Rust 后端
-│  ├─ src/registry.rs        注册表软件枚举/删除
-│  ├─ src/store.rs           Store/MSIX 枚举与卸载
-│  ├─ src/uninstall.rs       卸载串解析与执行
-│  ├─ src/residuals.rs       残留扫描（只读）
-│  ├─ src/services.rs        服务/计划任务扫描与删除
-│  ├─ src/autostart.rs       自启动项管理
-│  ├─ src/firewall.rs        防火墙规则
-│  ├─ src/capabilities.rs    ConsentStore 能力
-│  ├─ src/ai.rs              OpenAI 兼容 AI 客户端
-│  ├─ src/safety.rs          安全护栏（路径/注册表/服务/任务/卸载校验）
-│  ├─ src/config.rs          AI 配置持久化
-│  ├─ icons/                 应用图标（可用 tools/make-icons.py 重新生成）
-│  └─ tauri.conf.json        Tauri 配置
-├─ tools/preview/            仅开发用：浏览器预览 + 截图（mock Tauri 命令，不参与打包）
-├─ tools/make-icons.py       开发用：生成 PNG/ICO 图标
-└─ package.json
+src/                    React 前端（软件管理 / 卸载向导 / 权限 / 设置）
+src-tauri/src/          Rust 后端（枚举、卸载、残留扫描、服务/任务、安全护栏、AI）
+src-tauri/capabilities/ Tauri 权限
+docs/screenshots/       README 截图
+tools/                  开发辅助（浏览器预览截图、图标生成）
+.github/workflows/      发布与 CI
 ```
+
+开发辅助说明：`tools/preview` 用 mock 数据在浏览器中预览界面并生成截图，不参与打包；`tools/make-icons.py` 用于重新生成应用图标。
 
 ---
 
-## 已知限制与安全说明
+## 贡献
 
-- **AI 结论仅供参考**，不自动执行删除，也不会自动勾选待删项（模型输出可能被提示注入，仅作为展示）。
-- 所有删除/卸载操作都会弹出确认对话框；删除不可撤销，请按需勾选。
-- 部分卸载器会启动子进程后立即退出，此时残留扫描可能早于卸载完成；如发现残留，重新扫描/清理即可。
-- 当前未启用严格 CSP；HKCU 用户可写的卸载条目在管理员进程中执行属于潜在提权面（建议只卸载可信软件）。
-- 建议先在虚拟机/系统快照中验证卸载与清理流程，再用于生产环境。
-- 本项目主要面向 Windows；其他平台未做支持。
-- 未配置 AI 时，卸载前风险检查 / 残留 AI 判断会显示不可用，但扫描与清理正常工作。
+欢迎提交 Issue 反馈 bug 或建议。提交 PR 前请确保：
+
+```bash
+pnpm build                          # 前端构建通过
+cd src-tauri && cargo test --lib    # Rust 测试通过
+```
+
+## 许可证
+
+本项目暂未声明开源许可证；如需在其它项目中使用/分发，请先联系作者。
 
 ## 免责声明
 

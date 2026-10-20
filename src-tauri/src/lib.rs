@@ -26,6 +26,71 @@ use crate::store::enumerate_store_apps;
 use crate::types::*;
 use crate::uninstall::run_uninstall;
 
+/// 当前进程是否管理员权限。
+#[cfg(windows)]
+fn is_admin() -> bool {
+    unsafe { windows::Win32::UI::Shell::IsUserAnAdmin().as_bool() }
+}
+#[cfg(not(windows))]
+fn is_admin() -> bool {
+    false
+}
+
+/// 非 Windows 平台不请求提权。
+#[cfg(not(windows))]
+fn relaunch_elevated() -> bool {
+    false
+}
+
+/// 以管理员身份重新启动当前程序并等待其退出（会弹出 UAC 授权框）。
+///
+/// 返回 true：用户同意并以提权实例运行完毕（当前实例可以退出）；
+/// 返回 false：用户取消 UAC 或提权启动失败（当前实例继续以普通权限运行）。
+#[cfg(windows)]
+fn relaunch_elevated() -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+    use windows::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    };
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let file: Vec<u16> = exe.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let verb: Vec<u16> = OsStr::new("runas")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    // SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NO_CONSOLE：
+    // 等待提权实例结束，且不要为它新开控制台窗口。
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | 0x0000_8000;
+    info.lpVerb = PCWSTR(verb.as_ptr());
+    info.lpFile = PCWSTR(file.as_ptr());
+    info.nShow = 1; // SW_SHOWNORMAL
+
+    if unsafe { ShellExecuteExW(&mut info) }.is_err() {
+        return false; // 用户取消 UAC 或启动失败
+    }
+    if info.hProcess.is_invalid() {
+        return false;
+    }
+    unsafe {
+        // 原进程保持存活，dev 模式下的 Vite 服务不会被 tauri CLI 提前关闭。
+        WaitForSingleObject(info.hProcess, INFINITE);
+        let _ = CloseHandle(info.hProcess);
+    }
+    true
+}
+
 /// 扫描后的残留缓存：appId -> residuals
 struct ResidualCache(Arc<RwLock<HashMap<String, Vec<ResidualItem>>>>);
 
@@ -111,6 +176,12 @@ fn list_installed_apps() -> Vec<InstalledApp> {
 #[tauri::command]
 fn get_ai_config() -> AiConfig {
     config::get()
+}
+
+/// 当前进程是否以管理员身份运行（用于提示 dev/debug 版提权问题）。
+#[tauri::command]
+fn is_elevated() -> bool {
+    is_admin()
 }
 
 #[tauri::command]
@@ -481,6 +552,16 @@ fn publisher_hints(app: &InstalledApp) -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 启动即请求管理员权限：
+    // - release 版有 requireAdministrator manifest，正常双击时 Windows 会先弹 UAC；
+    // - dev/debug 版没有 manifest，这里主动弹 UAC 并以提权实例重新运行；
+    // - 用户取消 UAC 时继续以普通权限运行（UI 顶部会提示功能可能失败）。
+    if !is_admin() {
+        if relaunch_elevated() {
+            // 提权实例已正常退出，当前普通权限实例直接结束，避免出现两个窗口/进程。
+            return;
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -493,6 +574,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_installed_apps,
             get_ai_config,
+            is_elevated,
             save_ai_config,
             probe_env_vars,
             resolve_ai_effective,

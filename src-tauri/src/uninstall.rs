@@ -133,12 +133,23 @@ fn run_and_wait(mut cmd: Command, _start: Instant) -> UninstallResult {
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
+            // ERROR_ELEVATION_REQUIRED (740)：当前进程没有管理员权限，
+            // 而软件自带的卸载器要求提权（常见于 debug/dev 构建）。
+            let log = if e.raw_os_error() == Some(740) {
+                "需要管理员权限：当前 CleanSweep 未以管理员身份运行，无法启动该卸载程序。\n\
+                 解决方法：重新启动 CleanSweep，并在 Windows UAC 弹框中选择「是」允许管理员权限；\n\
+                 开发调试时可关闭程序后在「以管理员身份运行」的终端里执行 pnpm tauri dev；\n\
+                 安装版（release）启动时会自动请求管理员权限。"
+                    .to_string()
+            } else {
+                format!("启动卸载程序失败: {}", e)
+            };
             return UninstallResult {
                 success: false,
                 exit_code: None,
-                log: format!("启动卸载程序失败: {}", e),
+                log,
                 requires_reboot: false,
-            }
+            };
         }
     };
     let pid = child.id();

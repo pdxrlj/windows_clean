@@ -12,7 +12,14 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("apps");
   const [aiEnabled, setAiEnabled] = useState(false);
   const [apps, setApps] = useState<InstalledApp[]>([]);
+  /** null=检测中；false=非管理员（dev/debug 常见），显示提权提示。 */
+  const [elevated, setElevated] = useState<boolean | null>(null);
   const toasts = useToasts();
+
+  useEffect(() => {
+    // 旧后端没有该命令时按“已提权”处理，避免误报。
+    api.isElevated().then(setElevated).catch(() => setElevated(true));
+  }, []);
 
   const refreshAi = () => {
     api
@@ -69,6 +76,20 @@ export default function App() {
             <div className={"ai-dot" + (aiEnabled ? " on" : "")} title={aiEnabled ? "AI 已启用" : "AI 未配置"} />
           </nav>
           <main className="main">
+            {elevated === false && (
+              <div className="admin-banner" role="alert">
+                <span>
+                  当前<strong>未以管理员身份运行</strong>（可能取消了 UAC 授权）：卸载、清理残留、防火墙等操作可能失败（如 os error 740）。
+                </span>
+                <span className="admin-banner-how">
+                  重启 CleanSweep 并在 UAC 弹框中选择「是」；开发调试时也可在管理员终端执行
+                  <code>pnpm tauri dev</code>。
+                </span>
+                <button className="ghost" onClick={() => setElevated(true)}>
+                  知道了
+                </button>
+              </div>
+            )}
             {tab === "apps" && <AppsView />}
             {tab === "permissions" && <PermissionsView apps={apps} />}
             {tab === "settings" && <SettingsView onSaved={refreshAi} />}

@@ -148,6 +148,8 @@ export interface AutostartEntry {
 export const api = {
   listInstalledApps: () => invoke<InstalledApp[]>("list_installed_apps"),
   getAiConfig: () => invoke<AiConfig>("get_ai_config"),
+  /** 当前进程是否管理员权限（dev/debug 版不会自动提权）。 */
+  isElevated: () => invoke<boolean>("is_elevated"),
   saveAiConfig: (cfg: AiConfig) => invoke<void>("save_ai_config", { cfg }),
   probeEnvVars: (names: string[]) =>
     invoke<Record<string, EnvProbe>>("probe_env_vars", { names }),

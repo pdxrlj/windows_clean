@@ -235,6 +235,19 @@ async function main() {
     await setViewport(1000);
     await sleep(2400);
     await shot("wizard-intro.png");
+    // 默认展开的范围说明 + 勾选“我已了解扫描/清理范围”，才能开始卸载
+    const ack = await cdp.send("Runtime.evaluate", {
+      expression: `(() => {
+        const cb = document.querySelector('.scope-ack input[type=checkbox]');
+        if (!cb) return 'NO_ACK';
+        cb.click();
+        return 'ACKED';
+      })()`,
+      returnByValue: true,
+    });
+    console.log("scope ack:", ack.result?.value);
+    await sleep(400);
+    await shot("wizard-scope.png");
 
     console.log("wizard start:", await click("开始卸载"));
     // confirm dialog

@@ -4,6 +4,7 @@ import {
   onEvent,
   type InstalledApp,
   type ResidualItem,
+  type ResidualKind,
   type AiResidualAssessment,
   type AiSafetyVerdict,
   type AiUninstallRisk,
@@ -13,6 +14,142 @@ import {
 import { useConfirm } from "../components/Confirm";
 
 type Step = "intro" | "uninstalling" | "uninstalled" | "scanning" | "review" | "deleting" | "done";
+
+interface CleanupGroup {
+  key: string;
+  label: string;
+  items: ResidualItem[];
+  bytes: number;
+  locations: string[];
+}
+
+const CLEANUP_GROUP_ORDER = [
+  "programfiles",
+  "programdata",
+  "localappdata",
+  "roaming",
+  "shortcut",
+  "registry",
+  "service",
+  "task",
+  "other",
+];
+
+/** 把残留项归类到用户能看懂的“目录/数据”分组。 */
+function cleanupGroupOf(r: ResidualItem): { key: string; label: string } {
+  switch (r.kind) {
+    case "registrykey":
+      return { key: "registry", label: "注册表项" };
+    case "service":
+      return { key: "service", label: "Windows 服务" };
+    case "scheduledtask":
+      return { key: "task", label: "计划任务" };
+    case "shortcut":
+      return { key: "shortcut", label: "开始菜单快捷方式" };
+    default:
+      break;
+  }
+  const p = r.path.toLowerCase().replace(/\//g, "\\");
+  if (p.includes("\\programdata")) return { key: "programdata", label: "公共数据 (ProgramData)" };
+  if (p.includes("\\appdata\\locallow")) return { key: "localappdata", label: "用户数据 (LocalLow)" };
+  if (p.includes("\\appdata\\local")) return { key: "localappdata", label: "用户数据 (LocalAppData)" };
+  if (p.includes("\\appdata\\roaming")) return { key: "roaming", label: "用户数据 (Roaming)" };
+  if (p.includes("\\program files")) return { key: "programfiles", label: "程序目录 (Program Files)" };
+  return {
+    key: "other",
+    label: r.kind === "directory" ? "其他目录" : "其他文件",
+  };
+}
+
+/** 汇总本次扫描到的清理范围：分组、位置、项数与占用空间。 */
+function summarizeCleanup(items: ResidualItem[]): CleanupGroup[] {
+  const map = new Map<string, CleanupGroup>();
+  for (const r of items) {
+    const { key, label } = cleanupGroupOf(r);
+    let group = map.get(key);
+    if (!group) {
+      group = { key, label, items: [], bytes: 0, locations: [] };
+      map.set(key, group);
+    }
+    group.items.push(r);
+    group.bytes += r.sizeBytes ?? 0;
+    const loc =
+      r.kind === "service" || r.kind === "scheduledtask" ? r.display : r.path;
+    if (loc && !group.locations.includes(loc)) {
+      group.locations.push(loc);
+    }
+  }
+  return [...map.values()].sort(
+    (a, b) => CLEANUP_GROUP_ORDER.indexOf(a.key) - CLEANUP_GROUP_ORDER.indexOf(b.key),
+  );
+}
+
+/** 显示在“清理范围”里的位置摘要（最多显示两项，其余折叠）。 */
+function locationsText(group: CleanupGroup): string {
+  const shown = group.locations.slice(0, 2).join("；");
+  return group.locations.length > 2
+    ? `${shown} 等 ${group.locations.length} 处`
+    : shown || "—";
+}
+
+function kindLabel(kind: ResidualKind): string {
+  return {
+    file: "文件",
+    directory: "目录",
+    registrykey: "注册表",
+    shortcut: "快捷方式",
+    service: "服务",
+    scheduledtask: "计划任务",
+    envvar: "环境变量",
+  }[kind];
+}
+
+/** 常见的“静默/无界面”卸载参数（用于向用户提示：软件自带的卸载串可能本来就是静默的）。 */
+const SILENT_FLAG_RE =
+  /(?:^|\s)(?:\/S|--?silent|--?quiet|\/SILENT|\/VERYSILENT|\/QUIET|\/QN)\b/i;
+
+function hasSilentFlags(command: string): boolean {
+  return SILENT_FLAG_RE.test(command);
+}
+
+interface ResolvedUninstallCommand {
+  command: string;
+  quietAvailable: boolean;
+  storeApp: boolean;
+  usingQuiet: boolean;
+}
+
+/**
+ * 计算本次实际会执行的卸载命令：
+ * - Store 应用由后端调用 Remove-AppxPackage；
+ * - 勾选静默且软件提供 QuietUninstallString 时用静默串；
+ * - 否则使用注册表里的 UninstallString（可能本身就带 /SILENT，CleanSweep 不会修改它）。
+ */
+function resolveUninstallCommand(
+  app: InstalledApp,
+  silent: boolean,
+): ResolvedUninstallCommand {
+  const normal = (app.uninstallString ?? "").trim();
+  const quiet = (app.quietUninstallString ?? "").trim();
+  const storeApp = app.source === "store";
+  if (storeApp) {
+    return {
+      command: normal || "Remove-AppxPackage（由 CleanSweep 调用）",
+      quietAvailable: false,
+      storeApp,
+      usingQuiet: false,
+    };
+  }
+  if (silent && quiet) {
+    return { command: quiet, quietAvailable: true, storeApp, usingQuiet: true };
+  }
+  return {
+    command: normal,
+    quietAvailable: Boolean(quiet),
+    storeApp,
+    usingQuiet: false,
+  };
+}
 
 function errText(e: unknown): string {
   if (typeof e === "string") return e;
@@ -39,7 +176,7 @@ export function UninstallWizard({
   onDone: () => void;
 }) {
   const [step, setStep] = useState<Step>("intro");
-  const [silent, setSilent] = useState(true);
+  const [silent, setSilent] = useState(false);
   const [uninstallRes, setUninstallRes] = useState<UninstallResult | null>(null);
   const [residuals, setResiduals] = useState<ResidualItem[]>([]);
   const [assessment, setAssessment] = useState<AiResidualAssessment | null>(null);
@@ -54,12 +191,16 @@ export function UninstallWizard({
   const [preRiskError, setPreRiskError] = useState<string | null>(null);
   const [preRiskSkipped, setPreRiskSkipped] = useState(false);
   const [riskAck, setRiskAck] = useState(false);
+  /** 卸载前确认“已知晓扫描/清理范围”（具体条目会在扫描后逐项确认）。 */
+  const [scopeAck, setScopeAck] = useState(false);
   /** 卸载/清理后的复查结果（是否还有残留 = 是否卸载干净） */
   const [postCheck, setPostCheck] = useState<ResidualItem[] | null>(null);
   const [postChecking, setPostChecking] = useState(false);
   const confirm = useConfirm();
   // 旧版后端可能不返回 isProtected，缺失一律按“不受保护”处理。
   const isProtected = Boolean(app.isProtected);
+  const uninstallCommand = resolveUninstallCommand(app, silent);
+  const commandHasSilentFlags = hasSilentFlags(uninstallCommand.command);
 
   const dangerousRisk = preRisk?.riskLevel === "high" || preRisk?.riskLevel === "critical";
 
@@ -103,8 +244,24 @@ export function UninstallWizard({
       danger: true,
       message: (
         <div>
-          <p>将运行以下卸载程序：</p>
-          <pre>{app.uninstallString ?? app.quietUninstallString ?? "(Store 应用将调用 Remove-AppxPackage)"}</pre>
+          <p>将运行以下卸载命令（来自软件注册信息）：</p>
+          <pre>{uninstallCommand.command || "（注册表未提供卸载命令）"}</pre>
+          <p className="muted">
+            {uninstallCommand.storeApp
+              ? "Store 应用将由 CleanSweep 调用 Remove-AppxPackage 卸载。"
+              : `运行方式：${
+                  uninstallCommand.usingQuiet
+                    ? "静默（软件提供的 QuietUninstallString）"
+                    : "按软件自带命令执行"
+                }`}
+            ，卸载完成后自动扫描残留并由 AI 判断是否卸载干净。
+          </p>
+          {commandHasSilentFlags && (
+            <p className="hint" style={{ color: "var(--warn)" }}>
+              注意：这条命令本身已包含静默参数（如 /SILENT）。即使取消勾选“优先使用静默卸载”，
+              也可能不会弹出卸载界面——这是软件注册信息里的原始命令，CleanSweep 不会修改它。
+            </p>
+          )}
           {preRisk && (
             <p>
               <span className={"pill " + riskPill(preRisk.riskLevel)}>
@@ -113,10 +270,6 @@ export function UninstallWizard({
               <span className="muted"> {preRisk.recommendation}</span>
             </p>
           )}
-          <p className="muted">
-            模式：{silent ? "静默（若可用）" : "交互式（卸载器自身弹窗）"}，卸载完成后自动扫描残留并由
-            AI 判断是否卸载干净。
-          </p>
         </div>
       ),
       confirmLabel: "运行卸载",
@@ -188,14 +341,28 @@ export function UninstallWizard({
       setPostCheck(null);
       return;
     }
+    const pickGroups = summarizeCleanup(picks);
+    const pickBytes = picks.reduce((s, r) => s + (r.sizeBytes ?? 0), 0);
     const ok = await confirm({
       title: `确认删除 ${picks.length} 项残留`,
       danger: true,
       message: (
         <div>
-          <p>将删除以下项目（不可恢复）：</p>
+          <p>
+            将删除以下项目（不可恢复）：涉及 <strong>{pickGroups.length}</strong> 类位置、共{" "}
+            <strong>{picks.length}</strong> 项
+            {pickBytes > 0 ? `，约 ${fmtSize(pickBytes)}` : ""}。
+          </p>
+          <ul>
+            {pickGroups.map((g) => (
+              <li key={g.key}>
+                {g.label} · {g.items.length} 项
+                {g.bytes > 0 ? ` · ${fmtSize(g.bytes)}` : ""}
+              </li>
+            ))}
+          </ul>
           <pre style={{ maxHeight: 240, overflow: "auto" }}>
-            {picks.map((p) => `[${p.kind}] ${p.path}`).join("\n")}
+            {picks.map((p) => `[${kindLabel(p.kind)}] ${p.path}`).join("\n")}
           </pre>
           {assessment && <p className="muted">AI 判定仅供参考，最终删除项以你勾选的为准。</p>}
         </div>
@@ -264,6 +431,32 @@ export function UninstallWizard({
       .reduce((s, r) => s + (r.sizeBytes ?? 0), 0);
   }, [deleteResults, residuals]);
 
+  // 本次扫描到、可能被清理的目录/数据分组（供用户确认“到底动哪里”）。
+  const cleanupGroups = useMemo(() => summarizeCleanup(residuals), [residuals]);
+  const cleanupBytes = useMemo(
+    () => residuals.reduce((s, r) => s + (r.sizeBytes ?? 0), 0),
+    [residuals],
+  );
+  const selectedCleanupCount = residuals.filter((r) => selected[r.id]).length;
+  const groupAllSelected = (g: CleanupGroup) =>
+    g.items.length > 0 && g.items.every((it) => Boolean(selected[it.id]));
+  const toggleCleanupGroup = (g: CleanupGroup) => {
+    setSelected((prev) => {
+      const target = !g.items.every((it) => Boolean(prev[it.id]));
+      const next = { ...prev };
+      g.items.forEach((it) => (next[it.id] = target));
+      return next;
+    });
+  };
+  const selectAllCleanup = () => {
+    setSelected(() => {
+      const next: Record<string, boolean> = {};
+      residuals.forEach((r) => (next[r.id] = true));
+      return next;
+    });
+  };
+  const clearAllCleanup = () => setSelected({});
+
   // 受保护条目：向导本身只呈现“已阻止”状态，不提供任何卸载入口。
   if (isProtected) {
     return (
@@ -294,7 +487,8 @@ export function UninstallWizard({
     );
   }
 
-  const startDisabled = (!preRiskSkipped && preRiskBusy) || (dangerousRisk && !riskAck);
+  const startDisabled =
+    (!preRiskSkipped && preRiskBusy) || (dangerousRisk && !riskAck) || !scopeAck;
 
   return (
     <div className="backdrop" onClick={requestClose}>
@@ -385,10 +579,89 @@ export function UninstallWizard({
                 )}
               </div>
 
+              <details className="scope-details" open>
+                <summary>本次会扫描 / 清理哪些目录与数据？</summary>
+                <div className="scope-details-body">
+                  <div className="scope-app">
+                    <div>
+                      <span className="scope-app-label">当前软件</span>
+                      <strong>{app.displayName}</strong>
+                    </div>
+                    <div className="scope-app-path">
+                      已知安装目录：
+                      <code>{app.installLocation || "注册表未记录（以扫描结果为准）"}</code>
+                    </div>
+                  </div>
+                  <ul>
+                    <li>
+                      <strong>程序目录：</strong>注册表记录的安装目录，以及 Program Files /
+                      Program Files (x86) 下与应用相关的目录
+                    </li>
+                    <li>
+                      <strong>用户与公共数据：</strong>LocalAppData、Roaming、ProgramData
+                      下与应用相关的目录和文件
+                    </li>
+                    <li>
+                      <strong>开始菜单：</strong>仅与应用相关的快捷方式（.lnk）
+                    </li>
+                    <li>
+                      <strong>注册表：</strong>HKCU / HKLM\SOFTWARE 下与应用同名的专属键；
+                      不会触碰 Microsoft\Windows 等系统项
+                    </li>
+                    <li>
+                      <strong>服务与计划任务：</strong>仅非 Windows 系统服务、非 Windows
+                      内置计划任务
+                    </li>
+                  </ul>
+                  <p className="hint">
+                    AI 分析只使用软件名、发布者、版本、安装目录、卸载串和残留清单，不会上传文件内容；
+                    API Key 仅保存在本机。
+                  </p>
+                  <label className="checkbox scope-ack">
+                    <input
+                      type="checkbox"
+                      checked={scopeAck}
+                      onChange={(e) => setScopeAck(e.target.checked)}
+                    />
+                    我已了解上述扫描 / 清理范围；具体清理项会在扫描后逐条列出，由我勾选确认。
+                  </label>
+                </div>
+              </details>
+
               <label className="checkbox" style={{ margin: "8px 0" }}>
                 <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} />
-                优先静默卸载（若该软件提供静默串）
+                优先使用软件提供的静默卸载命令（QuietUninstallString）
               </label>
+
+              <div className="uninstall-command">
+                <div className="uc-head">
+                  <span>将要运行的卸载命令（来自软件注册信息）</span>
+                  <span className="tag">
+                    {commandHasSilentFlags
+                      ? "自带静默参数"
+                      : uninstallCommand.usingQuiet
+                        ? "静默串"
+                        : "软件自带串"}
+                  </span>
+                </div>
+                <pre>{uninstallCommand.command || "（注册表未提供卸载命令）"}</pre>
+                {commandHasSilentFlags && (
+                  <div className="hint" style={{ color: "var(--warn)" }}>
+                    该命令本身已经包含静默参数（如 /SILENT /VERYSILENT /QUIET）。即使取消勾选上面的选项，
+                    也可能不会弹出卸载界面；CleanSweep 按软件注册信息原样执行，不会改写软件自带的卸载命令。
+                  </div>
+                )}
+                {silent && !uninstallCommand.quietAvailable && (
+                  <div className="hint">
+                    该软件没有提供独立的 QuietUninstallString，勾选后仍会执行上面的命令。
+                  </div>
+                )}
+                {!silent && !uninstallCommand.quietAvailable && !commandHasSilentFlags && (
+                  <div className="hint">
+                    未勾选静默卸载时，将按软件自带命令执行；若软件自身支持交互式界面，会正常弹出。
+                  </div>
+                )}
+              </div>
               <div className="actions">
                 <button onClick={onClose}>取消</button>
                 <button
@@ -398,9 +671,11 @@ export function UninstallWizard({
                   title={
                     dangerousRisk && !riskAck
                       ? "AI 判定为高风险，请先勾选“我已了解风险”"
-                      : preRiskBusy && !preRiskSkipped
-                        ? "正在等待 AI 风险检查结果"
-                        : ""
+                      : !scopeAck
+                        ? "请先展开并勾选“我已了解扫描 / 清理范围”"
+                        : preRiskBusy && !preRiskSkipped
+                          ? "正在等待 AI 风险检查结果"
+                          : ""
                   }
                 >
                   {preRiskBusy && !preRiskSkipped ? (
@@ -500,6 +775,47 @@ export function UninstallWizard({
                   <span className="muted" style={{ fontSize: 11 }}>
                     AI 不会自动勾选，最终删除项由你选择。
                   </span>
+                </div>
+              )}
+
+              {residuals.length > 0 && (
+                <div className="cleanup-scope" aria-label="本次清理范围">
+                  <div className="scope-head">
+                    <span className="scope-title">本次将清理的目录与数据</span>
+                    <span className="scope-total">
+                      已选 {selectedCleanupCount}/{residuals.length} 项 ·{" "}
+                      {cleanupBytes > 0 ? `约 ${fmtSize(cleanupBytes)}` : "大小未知"}
+                    </span>
+                    <span className="scope-actions">
+                      <button type="button" className="ghost" onClick={selectAllCleanup}>
+                        全选
+                      </button>
+                      <button type="button" className="ghost" onClick={clearAllCleanup}>
+                        清空
+                      </button>
+                    </span>
+                  </div>
+                  {cleanupGroups.map((g) => (
+                    <div className="scope-row" key={g.key}>
+                      <input
+                        type="checkbox"
+                        className="scope-group-check"
+                        checked={groupAllSelected(g)}
+                        onChange={() => toggleCleanupGroup(g)}
+                        title="选中 / 取消该类的全部项目"
+                      />
+                      <span className="scope-label">{g.label}</span>
+                      <span className="scope-paths" title={g.locations.join("\n")}>
+                        {locationsText(g)}
+                      </span>
+                      <span className="scope-count">{g.items.length} 项</span>
+                      <span className="scope-size">{g.bytes > 0 ? fmtSize(g.bytes) : "—"}</span>
+                    </div>
+                  ))}
+                  <div className="scope-foot">
+                    仅显示本次扫描到的应用专属残留；Windows 系统目录、关键服务与 Windows
+                    内置计划任务不会出现在这里。可先按类别全选，再在下方逐项核对/取消。
+                  </div>
                 </div>
               )}
 

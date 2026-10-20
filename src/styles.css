@@ -713,6 +713,208 @@ input[type="checkbox"] { width: auto; accent-color: var(--amber); }
   line-height: 1.65;
 }
 
+/* 卸载向导：实际会执行的卸载命令 */
+.uninstall-command {
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.uninstall-command .uc-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.uninstall-command .uc-head .tag { margin-left: auto; }
+.uninstall-command pre {
+  margin: 0;
+  max-height: 130px;
+  overflow: auto;
+  padding: 6px 8px;
+  background: var(--base);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.uninstall-command .hint {
+  margin: 5px 0 0;
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+
+/* 卸载向导：扫描范围说明 + 清理范围概览 */
+.scope-details {
+  margin: 8px 0;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 8px 12px;
+}
+.scope-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--dim);
+  list-style: none;
+}
+.scope-details > summary::-webkit-details-marker { display: none; }
+.scope-details > summary::before {
+  content: "▸ ";
+  color: var(--amber);
+  font-family: var(--font-mono);
+}
+.scope-details[open] > summary::before { content: "▾ "; }
+.scope-details-body { margin-top: 8px; color: var(--dim); font-size: 12px; line-height: 1.75; }
+.scope-details-body ul { margin: 0 0 6px; padding-left: 18px; }
+.scope-details-body p { margin: 0; font-size: 11px; }
+.scope-details-body .scope-app {
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--base);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.scope-details-body .scope-app-label {
+  display: inline-block;
+  min-width: 74px;
+  color: var(--dimmer);
+}
+.scope-details-body .scope-app-path code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink);
+  word-break: break-all;
+}
+.scope-details-body .scope-ack {
+  margin-top: 10px;
+  align-items: flex-start;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.scope-details-body .scope-ack input { margin-top: 2px; }
+
+.cleanup-scope {
+  margin: 4px 0 12px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.cleanup-scope .scope-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--hair);
+}
+.cleanup-scope .scope-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dimmer);
+  text-transform: lowercase;
+  letter-spacing: .03em;
+}
+.cleanup-scope .scope-total {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--dim);
+}
+.cleanup-scope .scope-actions {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+}
+.cleanup-scope .scope-actions .ghost {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+.cleanup-scope .scope-row {
+  display: grid;
+  grid-template-columns: 16px 160px minmax(0, 1fr) 56px 76px;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--hair);
+  font-size: 11px;
+}
+.cleanup-scope .scope-row:last-of-type { border-bottom: none; }
+.cleanup-scope .scope-group-check {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--amber);
+  cursor: pointer;
+}
+.cleanup-scope .scope-label { color: var(--ink); }
+.cleanup-scope .scope-paths {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cleanup-scope .scope-count { color: var(--dim); text-align: right; }
+.cleanup-scope .scope-size {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--amber);
+  text-align: right;
+}
+.cleanup-scope .scope-foot {
+  padding: 7px 12px 9px;
+  font-size: 10px;
+  color: var(--dimmer);
+  line-height: 1.6;
+}
+@media (max-width: 640px) {
+  .cleanup-scope .scope-row { grid-template-columns: 16px 120px minmax(0, 1fr) 48px; }
+  .cleanup-scope .scope-size { display: none; }
+  .cleanup-scope .scope-actions { display: none; }
+}
+
+/* 未以管理员身份运行时的顶部提示（dev/debug 常见） */
+.admin-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #4a3a20;
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.admin-banner strong { color: var(--warn); }
+.admin-banner-how { color: var(--dim); font-size: 11px; }
+.admin-banner-how code {
+  margin: 0 4px;
+  padding: 1px 5px;
+  border: 1px solid var(--hair-2);
+  border-radius: var(--radius);
+  background: var(--base);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.admin-banner .ghost { margin-left: auto; flex: none; }
+
 /* 响应式 */
 @media (max-width: 760px) {
   .settings-page { padding: 14px 14px 32px; gap: 12px; }

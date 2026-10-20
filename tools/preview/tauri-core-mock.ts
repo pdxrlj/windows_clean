@@ -292,6 +292,33 @@ const WIZARD_RESIDUALS = [
     sizeBytes: 1200,
     inUse: false,
   },
+  {
+    id: "appdata_dir:C:\\ProgramData\\DemoVendor\\DemoApp",
+    kind: "directory",
+    path: "C:\\ProgramData\\DemoVendor\\DemoApp",
+    display: "公共数据: C:\\ProgramData\\DemoVendor\\DemoApp",
+    detail: "2.1 MB",
+    sizeBytes: 2_100_000,
+    inUse: false,
+  },
+  {
+    id: "appdata_dir:C:\\Users\\preview\\AppData\\Local\\DemoApp",
+    kind: "directory",
+    path: "C:\\Users\\preview\\AppData\\Local\\DemoApp",
+    display: "用户数据: C:\\Users\\preview\\AppData\\Local\\DemoApp",
+    detail: "4.6 MB",
+    sizeBytes: 4_600_000,
+    inUse: false,
+  },
+  {
+    id: "svc:DemoAppService",
+    kind: "service",
+    path: "C:\\Program Files\\DemoApp\\DemoAppService.exe",
+    display: "服务: DemoApp Service (DemoAppService)",
+    detail: "C:\\Program Files\\DemoApp\\DemoAppService.exe",
+    sizeBytes: null,
+    inUse: false,
+  },
 ];
 
 const WIZARD_APP = {
@@ -301,8 +328,9 @@ const WIZARD_APP = {
   version: "2.3.1",
   installLocation: "C:\\Program Files\\DemoApp",
   installDate: "2026-01-02",
-  uninstallString: "C:\\Program Files\\DemoApp\\uninstall.exe /S",
-  quietUninstallString: "C:\\Program Files\\DemoApp\\uninstall.exe /S",
+  uninstallString:
+    '"C:\\Program Files\\DemoApp\\uninstall.exe" --brand-demo /SILENT --fake-silent /LOG',
+  quietUninstallString: null,
   displayIcon: null,
   estimatedSizeKb: 12_600,
   source: "registryuser",
