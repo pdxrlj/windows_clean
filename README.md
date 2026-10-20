@@ -216,21 +216,57 @@ pnpm tauri build
 | `.github/workflows/release.yml` | 推送 `v*` tag | 在 `windows-latest` 构建并创建 GitHub Release，上传 MSI / NSIS 安装包 / 绿色版 exe |
 | `.github/workflows/ci.yml` | push 到 `main`/`master`、PR | 前端构建 + Rust 检查 + 单元测试 |
 
-### 发布步骤
+### 一键发版（推荐）
+
+仓库根目录带一个 `Makefile` 和 `tools/tag-release.ps1`。确认当前改动都已提交、工作区干净后执行：
+
+```bash
+make tag v0.0.3
+```
+
+它会自动完成：
+
+1. 校验版本号格式（`vX.Y.Z`）、当前分支、origin 远程与 tag 是否已存在；
+2. 同步版本号：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`（同时更新 `Cargo.lock`）；
+3. 提交 `release: v0.0.3`；
+4. 推送当前分支；
+5. 创建并推送 tag `v0.0.3`，触发 GitHub Actions；
+6. CI 构建出的文件名自动使用该版本，例如 `CleanSweep_0.0.3_x64-setup.exe`、`CleanSweep_0.0.3_x64_en-US.msi`。
+
+只想预演、不改仓库：
+
+```bash
+make tag v0.0.3 DRY_RUN=1
+```
+
+其他常用命令：
+
+```bash
+make build    # 本地构建前端 + Tauri 安装包（NSIS / MSI）
+make check    # 前端构建 + Rust 单元测试
+```
+
+> 首次使用前，请先把 `Makefile`、`tools/tag-release.ps1` 以及当前改动提交到仓库——脚本会拒绝有未提交修改的工作区，避免发版内容被漏掉。  
+> Windows 需要 GNU Make：Git Bash 一般自带；也可以 `choco install make` 或 `scoop install make`。  
+> 没有 make 时可直接运行：  
+> `powershell -NoProfile -ExecutionPolicy Bypass -File tools/tag-release.ps1 -Version v0.0.3`  
+> 脚本要求工作区干净（先 commit 你的改动），版本号只支持 `X.Y.Z` 数字格式，且 tag 不能已存在。
+
+### 手动发布（不使用脚本）
 
 1. 仓库 **Settings → Actions → General → Workflow permissions** 设为 **Read and write permissions**。
 2. 同步 3 处版本号：`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`。
-3. 提交后打 tag：
+3. 提交后打 tag（tag 名与版本号保持一致）：
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.0.3
+git push origin v0.0.3
 ```
 
 Release 会自动生成并附带：
 
-- `CleanSweep_0.1.0_x64-setup.exe`（NSIS 安装包）
-- `CleanSweep_0.1.0_x64_en-US.msi`（MSI）
+- `CleanSweep_<version>_x64-setup.exe`（NSIS 安装包）
+- `CleanSweep_<version>_x64_en-US.msi`（MSI）
 - `CleanSweep.exe`（绿色版）
 
 > 代码签名/自动更新暂未启用；可在 workflow 中配置 `TAURI_SIGNING_PRIVATE_KEY` 等 secrets。

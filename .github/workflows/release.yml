@@ -1,11 +1,13 @@
 # CleanSweep — tag-triggered Windows release pipeline
 # =============================================================================
 # How to cut a release:
-#   1. Bump the version in package.json, src-tauri/tauri.conf.json and
-#      src-tauri/Cargo.toml, then commit and push.
-#   2. Create and push a version tag:
-#          git tag v0.1.0
-#          git push origin v0.1.0
+#   Recommended:
+#       make tag v0.0.3      # bumps versions, commits, pushes branch + tag
+#   Manual:
+#       bump package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml,
+#       commit & push, then:
+#          git tag v0.0.3
+#          git push origin v0.0.3
 #   Pushing the tag builds the app on windows-latest and publishes a GitHub
 #   Release for that tag with the installers attached. No manual inputs needed.
 #
@@ -51,6 +53,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Keep the tag and the app version in sync. `make tag vX.Y.Z` does this
+      # automatically; this guard catches manual releases with a stale version.
+      - name: Verify tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $expected = $tag -replace '^v', ''
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $conf = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
+            Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($pkg -ne $expected -or $conf -ne $expected -or $cargo -ne $expected) {
+            throw "Version mismatch: tag=$expected package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo. Use 'make tag $tag' or bump all three files."
+          }
+          Write-Host "Version OK: $expected"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
