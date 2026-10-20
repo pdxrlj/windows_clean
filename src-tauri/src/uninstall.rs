@@ -221,7 +221,7 @@ fn extract_msi_guid(s: &str) -> Option<String> {
 }
 
 /// 把 "C:\Program Files\App\uninst.exe" /S 这样的串拆成 program + args
-fn split_command(raw: &str) -> (String, Vec<String>) {
+pub(crate) fn split_command(raw: &str) -> (String, Vec<String>) {
     let raw = raw.trim();
     if raw.is_empty() {
         return (String::new(), vec![]);

@@ -130,21 +130,112 @@ fn cache_residuals(
     idx.by_app.insert(app_id.to_string(), ids);
 }
 
-/// 卸载程序返回后，等待系统真正完成卸载（有的卸载器会先拉起子进程再立刻退出），
-/// 避免在卸载仍在进行时扫描残留/给出“已卸载干净”误判。
-fn wait_for_uninstall_settle(app_id: &str) {
-    let started = std::time::Instant::now();
-    loop {
-        if find_installed_app(app_id).is_none() {
-            break;
+/// 收集“仍与这个应用相关”的进程（安装目录内、或卸载器所在目录内）。
+/// 用来识别卸载器父进程退出后，仍留在后台继续卸载的子进程/卸载窗口。
+fn related_uninstall_processes(app: &InstalledApp) -> Vec<String> {
+    use sysinfo::{ProcessesToUpdate, System};
+
+    let mut needles: Vec<String> = Vec::new();
+    if let Some(loc) = app.install_location.as_deref() {
+        let n = loc.trim_end_matches(['\\', '/']).to_ascii_lowercase();
+        if n.len() >= 6 {
+            needles.push(n);
         }
-        if started.elapsed() > std::time::Duration::from_secs(15) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(400));
     }
-    // 再给文件系统/注册表一个短暂的稳定窗口。
-    std::thread::sleep(std::time::Duration::from_millis(800));
+    for raw in [app.uninstall_string.as_deref(), app.quiet_uninstall_string.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        let (program, _) = crate::uninstall::split_command(raw);
+        if let Some(parent) = std::path::Path::new(&program).parent() {
+            let n = parent
+                .to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_ascii_lowercase();
+            if n.len() >= 6 {
+                needles.push(n);
+            }
+        }
+    }
+    needles.sort();
+    needles.dedup();
+    if needles.is_empty() {
+        return Vec::new();
+    }
+
+    let path_is_under = |path: &str, base: &str| {
+        path == base
+            || path.starts_with(&format!("{}\\", base))
+            || path.starts_with(&format!("{}/", base))
+    };
+
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    let self_pid = std::process::id();
+    let mut out = Vec::new();
+    for (pid, p) in sys.processes() {
+        if pid.as_u32() == self_pid {
+            continue;
+        }
+        let exe = p
+            .exe()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let cmd = p
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+        let hit = needles
+            .iter()
+            .any(|n| (!exe.is_empty() && path_is_under(&exe, n)) || cmd.contains(n));
+        if hit {
+            let name = p.name().to_string_lossy().to_string();
+            out.push(if name.is_empty() { exe } else { name });
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// 卸载器返回后，等待卸载真正完成：
+/// - 应用从“已安装列表”中消失；
+/// - 安装目录 / 卸载器目录下没有仍在运行的相关进程（含卸载器拉起的子进程）。
+/// 返回 true 表示已确认完成；false 表示等待超时（可能仍在后台卸载）。
+fn wait_for_uninstall_finish(app: &InstalledApp, app_handle: &tauri::AppHandle) -> bool {
+    use std::time::{Duration, Instant};
+
+    let started = Instant::now();
+    let mut last_log = Instant::now() - Duration::from_secs(10);
+    loop {
+        let installed = find_installed_app(&app.id).is_some();
+        let procs = related_uninstall_processes(app);
+        if !installed && procs.is_empty() {
+            // 再给文件系统/注册表一个短暂的稳定窗口。
+            std::thread::sleep(Duration::from_millis(1200));
+            return true;
+        }
+        if started.elapsed() > Duration::from_secs(600) {
+            return false;
+        }
+        if last_log.elapsed() > Duration::from_secs(3) {
+            let msg = if procs.is_empty() {
+                "卸载程序已退出，但软件仍在已安装列表中，继续等待卸载完成…".to_string()
+            } else {
+                let shown: Vec<String> = procs.iter().take(4).cloned().collect();
+                format!(
+                    "卸载程序已退出，检测到卸载器/应用进程仍在运行（{}），继续等待卸载完成…",
+                    shown.join("、")
+                )
+            };
+            app_handle.emit("uninstall-log", msg).ok();
+            last_log = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(1000));
+    }
 }
 
 /// 前端传来的 InstalledApp 不可信：必须与当前系统枚举结果按 id 完全匹配。
@@ -245,7 +336,7 @@ fn uninstall_app(
     recent.0.write().insert(real.id.clone(), real.clone());
 
     app_handle.emit("uninstall-log", "开始卸载…").ok();
-    let result = run_uninstall(&real, silent);
+    let mut result = run_uninstall(&real, silent);
     app_handle
         .emit(
             "uninstall-log",
@@ -254,17 +345,34 @@ fn uninstall_app(
         .ok();
 
     if result.success {
-        // 等待系统真正完成卸载（有些卸载器会拉起子进程后立刻退出）。
-        wait_for_uninstall_settle(&real.id);
-        let ctx = build_scan_context(&real);
-        let residuals = residuals::scan_residuals(&ctx);
-        cache_residuals(&cache, &index, &real.id, &residuals);
         app_handle
             .emit(
-                "residuals-found",
-                serde_json::json!({ "appId": real.id, "items": residuals }),
+                "uninstall-log",
+                "卸载程序已退出，正在确认卸载是否真正完成（等待应用进程与安装记录消失）…",
             )
             .ok();
+        let finished = wait_for_uninstall_finish(&real, &app_handle);
+        if finished {
+            let ctx = build_scan_context(&real);
+            let residuals = residuals::scan_residuals(&ctx);
+            cache_residuals(&cache, &index, &real.id, &residuals);
+            app_handle
+                .emit(
+                    "residuals-found",
+                    serde_json::json!({ "appId": real.id, "items": residuals }),
+                )
+                .ok();
+        } else {
+            // 卸载器仍在后台运行：不自动扫描（避免扫描/删除正在被卸载的文件），
+            // 明确告知用户等待完成后再手动扫描。
+            result.success = false;
+            result.requires_reboot = true;
+            result.log.push_str(
+                "\n\n警告：卸载程序已退出，但等待 10 分钟仍未检测到卸载完成。\n\
+                 软件自带的卸载器可能仍在后台运行（例如仍在删除文件或等待操作）。\n\
+                 请等待其窗口/进程结束后，再点击「扫描残留」；必要时重启电脑后再扫描。",
+            );
+        }
     }
     Ok(result)
 }

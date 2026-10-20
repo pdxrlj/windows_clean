@@ -712,6 +712,10 @@ export function UninstallWizard({
                 </div>
               )}
               <pre style={{ maxHeight: 200 }}>{uninstallRes?.log}</pre>
+              <div className="hint">
+                如果软件自带的卸载器窗口/进度条还没有结束，请先等它完成，再点击「扫描残留」；
+                CleanSweep 会等待应用进程和安装记录消失，但个别卸载器可能超出等待时间。
+              </div>
               <div className="actions">
                 <button onClick={onClose}>稍后再清理</button>
                 <button className="primary" onClick={doScan}>
