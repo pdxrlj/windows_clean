@@ -1320,10 +1320,49 @@ mod tests {
         assert!(!path_segment_matches(r"c:\program files\quarkxpress\app.exe", "quark"));
     }
 
+    /// 取一个不含 8.3 短名的临时目录。
+    ///
+    /// CI 上 `TEMP` 常是 `C:\Users\RUNNER~1\AppData\Local\Temp` 这种短名形式，
+    /// 而 safety 会把带 `~N` 的路径片段判为可疑（防止用短名绕过目录黑名单），
+    /// 扫到的项会被全部丢弃。canonicalize 能拿到长名，但它会加 `\\?\` 前缀，去掉即可。
+    fn real_temp_dir() -> std::path::PathBuf {
+        let raw = std::env::temp_dir();
+        match std::fs::canonicalize(&raw) {
+            Ok(canon) => {
+                let s = canon.to_string_lossy().to_string();
+                let s = s.strip_prefix(r"\\?\").unwrap_or(s.as_str()).to_string();
+                std::path::PathBuf::from(s)
+            }
+            Err(_) => raw,
+        }
+    }
+
+    /// 测试专用的临时目录：保证整条路径都能通过 safety 校验。
+    ///
+    /// `real_temp_dir()` 展开不了时（极端的 TEMP 配置）退到 `target/tmp/`，
+    /// 仓库路径不含 `~`，一定能过。
+    fn alias_test_dir() -> std::path::PathBuf {
+        let base = real_temp_dir();
+        let suspicious = base.components().any(|c| match c {
+            std::path::Component::Normal(s) => {
+                let t = s.to_string_lossy();
+                t.contains('~') && t.bytes().any(|b| b.is_ascii_digit())
+            }
+            _ => false,
+        });
+        if suspicious {
+            return std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("target")
+                .join("tmp");
+        }
+        base
+    }
+
     #[test]
     fn alias_scan_catches_updater_siblings() {
         // 模拟中文显示名 + 英文安装目录/更新器目录的场景。
-        let base = std::env::temp_dir().join(format!(
+        let base = alias_test_dir().join(format!(
             "cleansweep-alias-test-{}",
             std::process::id()
         ));
