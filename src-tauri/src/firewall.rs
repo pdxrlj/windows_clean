@@ -1,8 +1,6 @@
 //! Windows 防火墙规则管理：为指定 exe 添加/移除联网阻止规则。
 //! 使用 netsh advfirewall firewall（兼容性好，无需 COM）。
 
-use std::process::Command;
-
 use serde::{Deserialize, Serialize};
 
 use crate::safety;
@@ -83,10 +81,7 @@ fn ps_rule_script(body: &str) -> Option<String> {
         "$ErrorActionPreference='SilentlyContinue'\n{}\n",
         body
     );
-    let out = Command::new(safety::powershell_exe())
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .ok()?;
+    let out = safety::powershell_command(&script).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -166,7 +161,7 @@ pub fn block(exe: &str) -> (bool, String) {
     let mut ok = true;
     let mut msgs = Vec::new();
     for (dir, _) in [("in", true), ("out", false)] {
-        let o = Command::new(safety::system32_exe("netsh.exe"))
+        let o = safety::hidden_command(safety::system32_exe("netsh.exe"))
             .args([
                 "advfirewall",
                 "firewall",
@@ -209,7 +204,7 @@ pub fn unblock(exe: &str) -> (bool, String) {
 }
 
 fn remove_rule(name: &str) -> bool {
-    let _ = Command::new(safety::system32_exe("netsh.exe"))
+    let _ = safety::hidden_command(safety::system32_exe("netsh.exe"))
         .args(["advfirewall", "firewall", "delete", &format!("rule name={}", name)])
         .output();
     // 不用 netsh 的本地化输出判断成功，改用 PowerShell 复查规则是否已消失。

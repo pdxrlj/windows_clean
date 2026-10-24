@@ -19,9 +19,15 @@ const DEFAULT_TEMPERATURE: f32 = 0.2;
 #[cfg(test)]
 const DEFAULT_TIMEOUT_SECS: u64 = 90;
 
-static CONFIG_PATH: Lazy<PathBuf> = Lazy::new(|| {
+/// 应用数据目录：`%APPDATA%/CleanSweep`。
+pub fn data_dir() -> PathBuf {
     let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     p.push("CleanSweep");
+    p
+}
+
+static CONFIG_PATH: Lazy<PathBuf> = Lazy::new(|| {
+    let mut p = data_dir();
     let _ = fs::create_dir_all(&p);
     p.push("ai_config.json");
     p

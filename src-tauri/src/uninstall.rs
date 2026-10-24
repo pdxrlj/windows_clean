@@ -118,11 +118,38 @@ pub fn run_uninstall(app: &InstalledApp, silent: bool) -> UninstallResult {
         return refused(e);
     }
 
-    let mut cmd = Command::new(&program);
+    let mut cmd = if silent || has_silent_flags(&raw) {
+        // 用户看不到卸载界面的情况（勾了静默，或注册表命令本身就带 /S /SILENT）：
+        // 卸载器若是控制台程序，这里会闪一个黑框，用 CREATE_NO_WINDOW 隐掉。
+        // 交互模式保持原样——控制台卸载器可能要显示提示文字，隐掉窗口反而会卡死。
+        safety::hidden_command(&program)
+    } else {
+        Command::new(&program)
+    };
     for a in args {
         cmd.arg(a);
     }
     run_and_wait(cmd, start)
+}
+
+/// 卸载串是否自带静默参数。
+///
+/// 前端勾“优先使用静默卸载命令”只是其中一种情况；注册表里那条命令本身就可能已经带了
+/// `/SILENT`、`/VERYSILENT`、`/qn`，此时用户同样看不到任何界面，控制台窗口也该一起隐藏。
+fn has_silent_flags(command: &str) -> bool {
+    const KEYS: &[&str] = &[
+        "/s",
+        "/silent",
+        "/verysilent",
+        "/quiet",
+        "/qn",
+        "--silent",
+        "--quiet",
+    ];
+    command
+        .split_whitespace()
+        .map(|a| a.trim_matches('"'))
+        .any(|a| KEYS.iter().any(|k| a.eq_ignore_ascii_case(k)))
 }
 
 fn run_and_wait(mut cmd: Command, _start: Instant) -> UninstallResult {
@@ -182,7 +209,7 @@ fn run_and_wait(mut cmd: Command, _start: Instant) -> UninstallResult {
                 if elapsed >= timeout {
                     // 只杀直接子进程不够：NSIS/Inno 等卸载器会再拉起子进程。
                     // 用 taskkill /T 结束整棵进程树（绝对路径，避免 PATH 劫持）。
-                    let _ = Command::new(safety::system32_exe("taskkill.exe"))
+                    let _ = safety::hidden_command(safety::system32_exe("taskkill.exe"))
                         .args(["/PID", &pid.to_string(), "/T", "/F"])
                         .output();
                     let _ = child.kill();
@@ -280,4 +307,20 @@ fn shell_like_split(s: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_silent_flags;
+
+    #[test]
+    fn detects_silent_flags_without_matching_paths() {
+        assert!(has_silent_flags(r#""C:\Program Files\App\unins000.exe" /SILENT"#));
+        assert!(has_silent_flags(r"C:\App\uninst.exe /S"));
+        assert!(has_silent_flags(r"msiexec /x{1234} /qn"));
+        assert!(has_silent_flags(r"uninst.exe --quiet"));
+        // 路径里的 \S 不是参数，不能误判成静默
+        assert!(!has_silent_flags(r#""D:\Software\App\uninst.exe""#));
+        assert!(!has_silent_flags(r"C:\Program Files\App\uninstall.exe"));
+    }
 }

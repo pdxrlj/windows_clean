@@ -68,6 +68,7 @@ pub enum ResidualKind {
     File,
     Directory,
     RegistryKey,
+    RegistryValue,
     Shortcut,
     Service,
     ScheduledTask,
@@ -134,12 +135,40 @@ pub struct AiAppInfo {
 pub struct AiUninstallRisk {
     #[serde(alias = "risk_level")]
     pub risk_level: RiskLevel,
+    /// AI 是否建议继续卸载（缺失时前端按风险等级处理）。
+    #[serde(default, alias = "safe_to_uninstall", deserialize_with = "de_opt_bool")]
+    pub safe_to_uninstall: Option<bool>,
+    /// AI 发现的问题/风险点。
+    #[serde(default, alias = "issues")]
+    pub issues: Vec<String>,
+    /// AI 识别出的卸载目标（目录/注册表/服务/任务等）。
+    #[serde(default, alias = "targets")]
+    pub targets: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
     #[serde(default, alias = "affected_components")]
     pub affected_components: Vec<String>,
     #[serde(default)]
     pub recommendation: String,
+}
+
+/// LLM 有时会把布尔值写成字符串/数字，这里做容错（无法识别按 None）。
+fn de_opt_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Bool(b) => Some(b),
+        serde_json::Value::Number(n) => n.as_i64().map(|v| v != 0),
+        serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "1" | "safe" => Some(true),
+            "false" | "no" | "0" | "unsafe" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    })
 }
 
 /// 卸载风险等级。序列化为小写（low/medium/high/critical）；
@@ -195,6 +224,92 @@ pub struct AiResidualItemVerdict {
     pub verdict: AiSafetyVerdict,
     #[serde(default)]
     pub reason: String,
+}
+
+/// 强制删除（绕过自带卸载器）的执行结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForceRemoveOutcome {
+    /// 还原点创建成功时的说明。
+    #[serde(default)]
+    pub restore_point: Option<String>,
+    /// 还原点创建失败的原因。不阻塞删除，但必须如实告知用户。
+    #[serde(default)]
+    pub restore_point_error: Option<String>,
+    /// 逐项删除结果。
+    pub results: Vec<DeleteResult>,
+    /// 是否顺手删掉了注册表里的卸载记录。
+    #[serde(default)]
+    pub entry_removed: bool,
+    #[serde(default)]
+    pub entry_error: Option<String>,
+}
+
+/// 扫描 + AI 推断的合并结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestedResiduals {
+    /// 规则扫描结果 + 验证通过的 AI 推断项。
+    pub items: Vec<ResidualItem>,
+    /// AI 对推断结果的一句话说明（AI 不可用时为空）。
+    #[serde(default)]
+    pub ai_summary: String,
+    /// 其中由 AI 推断并通过校验的项数。
+    #[serde(default)]
+    pub ai_guessed: usize,
+    /// AI 推断失败的原因；此时 `items` 只有规则扫描结果。
+    #[serde(default)]
+    pub ai_error: Option<String>,
+}
+
+/// AI 推断出的清理位置（尚未验证）。
+///
+/// AI 只能“猜”位置，猜到的东西必须逐条经过
+/// [`crate::residuals::verify_ai_guesses`] 校验才能变成可删除项。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCleanupGuess {
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub items: Vec<AiGuessedItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiGuessedItem {
+    /// 绝对路径，或 `HKCU\\Software\\...` / `HKLM\\SOFTWARE\\...` 形式的注册表键。
+    pub path: String,
+    /// "dir" | "file" | "registry"
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+/// 卸载后复查结论：AI 判断这款软件算不算卸载干净。
+///
+/// 与 [`AiResidualAssessment`] 的区别：后者回答“这些残留能不能删”，
+/// 这里回答“删完之后，还有没有必要继续处理”。剩余项若只是用户配置、
+/// 空目录或共享运行时，即使文件还在也应判定为已卸载干净。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCleanliness {
+    /// 是否可以认为已经卸载干净。模型未给出时前端按 `verdict` 兜底。
+    #[serde(default, deserialize_with = "de_opt_bool")]
+    pub clean: Option<bool>,
+    /// 剩余项的整体处置建议。
+    #[serde(default)]
+    pub verdict: Option<AiSafetyVerdict>,
+    /// 一句话结论，直接展示给用户。
+    #[serde(default)]
+    pub summary: String,
+    /// 建议的下一步（可为空）。
+    #[serde(default, alias = "next_step")]
+    pub next_step: String,
+    /// 针对剩余项的逐项建议。
+    #[serde(default, alias = "per_item")]
+    pub per_item: Vec<AiResidualItemVerdict>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

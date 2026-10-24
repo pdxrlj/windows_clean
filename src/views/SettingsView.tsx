@@ -655,7 +655,7 @@ export function SettingsView({ onSaved }: { onSaved: () => void }) {
   return (
     <>
       <div className="topbar">
-        <span className="title">设置 · AI</span>
+        <span className="h">AI 配置</span>
         <div className="spacer" />
         <span className={"ai-status " + statusKind} aria-live="polite">
           <span className="dot" aria-hidden />

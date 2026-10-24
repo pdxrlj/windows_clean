@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CleanSweep · 方向 A 仪器面板</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0E1117;
+    --panel: #12161D;
+    --panel2: #171C25;
+    --line: #262C38;
+    --line2: #1C212A;
+    --ink: #E6EAF2;
+    --dim: #98A0AF;
+    --amber: #E8A33D;
+    --green: #58C46B;
+    --red: #E5484D;
+    --sans: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--sans);
+    font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 20px;
+  }
+  .window {
+    width: 1280px; height: 800px; background: var(--bg);
+    border: 1px solid var(--line); display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #7F8899; }
+  .mono { font-family: var(--mono); }
+
+  /* ── 顶栏：读数条 ───────────────────────────── */
+  .top {
+    display: flex; align-items: stretch; border-bottom: 1px solid var(--line);
+    background: var(--panel); height: 62px; flex: 0 0 auto;
+  }
+  .brand {
+    width: 196px; display: flex; align-items: center; gap: 9px; padding-left: 16px;
+    border-right: 1px solid var(--line);
+  }
+  .brand .mark {
+    width: 18px; height: 18px; border: 2px solid var(--amber);
+    display: grid; place-items: center;
+  }
+  .brand .mark i { width: 6px; height: 6px; background: var(--amber); display: block; }
+  .brand .name { font-family: var(--mono); font-size: 12px; letter-spacing: .17em; font-weight: 600; }
+  .reads { display: flex; align-items: stretch; flex: 1; }
+  .read {
+    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+    padding: 0 20px; border-right: 1px solid var(--line2); min-width: 118px;
+  }
+  .read b { font-family: var(--mono); font-size: 19px; line-height: 1.1; font-weight: 600; }
+  .read b.hot { color: var(--amber); }
+  .lamps { display: flex; align-items: center; gap: 20px; padding: 0 20px; }
+  .lamp { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; letter-spacing: .1em; color: var(--dim); }
+  .lamp i { width: 7px; height: 7px; border-radius: 50%; display: block; }
+  .lamp i.on { background: var(--green); box-shadow: 0 0 0 2px rgba(88,196,107,.16); }
+  .lamp i.off { background: #3C4452; }
+  .lamp i.half { background: var(--amber); }
+
+  /* ── 主体 ───────────────────────────── */
+  .body { display: flex; flex: 1; min-height: 0; }
+
+  /* 拨档列 */
+  .rail { width: 196px; border-right: 1px solid var(--line); display: flex; flex-direction: column; flex: 0 0 auto; }
+  .seg {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 16px; height: 42px; font-size: 13px; color: #A8B0BF;
+    background: transparent; border: 0; border-bottom: 1px solid var(--line2);
+    border-left: 3px solid transparent; cursor: pointer; text-align: left;
+    font-family: inherit; width: 100%;
+  }
+  .seg .n { margin-left: auto; font-family: var(--mono); font-size: 11px; color: #7C8598; }
+  .seg .dot { width: 5px; height: 5px; background: #4C5566; display: block; }
+  .seg:hover { background: var(--panel); color: var(--ink); }
+  .seg.active { background: var(--amber); color: #16110A; border-left-color: var(--amber); font-weight: 600; }
+  .seg.active .n { color: #4A3512; }
+  .seg.active .dot { background: #16110A; }
+  .rail .foot { margin-top: auto; padding: 14px 16px 16px; border-top: 1px solid var(--line2); }
+  .scalebar { display: flex; gap: 2px; margin: 7px 0 8px; }
+  .scalebar i { flex: 1; height: 22px; background: #1E242E; display: block; }
+  .scalebar i.f { background: #39414F; }
+  .scalebar i.h { background: var(--amber); }
+  .rail .note { font-size: 11px; color: var(--dim); line-height: 1.45; }
+
+  /* 主区 */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #pane-apps { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .toolbar {
+    display: flex; align-items: center; gap: 10px; height: 46px;
+    padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--panel); flex: 0 0 auto;
+  }
+  .field {
+    display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 9px;
+    background: var(--bg); border: 1px solid var(--line); min-width: 268px;
+  }
+  .field input { background: transparent; border: 0; outline: none; color: var(--ink); font: inherit; flex: 1; min-width: 0; }
+  .field input::placeholder { color: #7C8598; }
+  .field .k {
+    font-family: var(--mono); font-size: 10.5px; color: #7C8598; border: 1px solid var(--line);
+    padding: 0 4px; flex: 0 0 auto; white-space: nowrap;
+  }
+  .btn {
+    height: 30px; padding: 0 12px; background: var(--panel2); color: var(--ink);
+    border: 1px solid #313848; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .btn:hover { border-color: #4B5464; }
+  .btn.primary { background: var(--amber); border-color: var(--amber); color: #16110A; font-weight: 600; }
+  .btn.primary:hover { background: #F2B254; }
+  .btn.danger { color: var(--red); border-color: #3E2629; }
+  .btn.danger:hover { background: rgba(229,72,77,.1); border-color: var(--red); }
+  .toolbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+  /* 表头 */
+  .thead {
+    display: grid; grid-template-columns: 1fr 190px 92px 96px;
+    gap: 12px; padding: 0 16px; height: 34px; align-items: center;
+    border-bottom: 1px solid var(--line); background: #101419; flex: 0 0 auto;
+  }
+  .thead span { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #8B93A2; }
+  .thead .num { text-align: right; }
+
+  /* 列表 */
+  .list { flex: 1; overflow: auto; }
+  .item { border-bottom: 1px solid var(--line2); }
+  .row {
+    display: grid; grid-template-columns: 1fr 190px 92px 96px; gap: 12px;
+    padding: 0 16px; height: 44px; align-items: center; cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .row:hover { background: #141921; }
+  .row.open { background: #141921; border-left-color: var(--amber); }
+  .row .nm { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
+  .row .nm .flag { font-family: var(--mono); font-size: 10px; letter-spacing: .06em; padding: 1px 5px; border: 1px solid #3B4351; color: #A3ACBB; }
+  .row .nm .flag.p { border-color: #6B4A20; color: #D08C34; }
+  .row .pub { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .src { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .row .sz { font-family: var(--mono); font-size: 12px; color: #C3CAD6; text-align: right; }
+
+  /* 行内仪表（A 方向独有） */
+  .inspector { display: none; background: #0B0E13; border-top: 1px solid var(--line); }
+  .item.open .inspector { display: flex; }
+  .inspector .col { padding: 14px 18px; border-right: 1px solid var(--line2); }
+  .inspector .col.kv { width: 300px; }
+  .kv-row { display: flex; justify-content: space-between; gap: 14px; padding: 3px 0; }
+  .kv-row .k { font-size: 12px; color: var(--dim); flex: 0 0 auto; white-space: nowrap; }
+  .kv-row .v {
+    font-family: var(--mono); font-size: 11px; color: #D6DCE6; text-align: right;
+    flex: 1; min-width: 0; overflow-wrap: anywhere;
+  }
+  .kv-block { padding: 4px 0 8px; }
+  .kv-block .k { display: block; font-size: 11.5px; color: var(--dim); margin-bottom: 3px; }
+  .kv-block .v {
+    display: block; font-family: var(--mono); font-size: 11px; color: #D6DCE6;
+    overflow-wrap: anywhere; line-height: 1.45;
+  }
+  .inspector .col.verdict { flex: 1; }
+  .verdict-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .verdict-head .pill {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+    padding: 2px 7px; border: 1px solid #2F5C39; color: #6FCF82; background: rgba(88,196,107,.08);
+  }
+  .verdict-head .pill.warn { border-color: #6B4A20; color: #E0A24A; background: rgba(232,163,61,.08); }
+  .verdict p { font-size: 12.5px; color: #B9C1CE; line-height: 1.6; max-width: 62ch; }
+  .inspector .col.act { width: 250px; display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+  .inspector .col.act .hint { font-size: 11px; color: var(--dim); line-height: 1.45; }
+  .readout { display: flex; gap: 26px; margin-bottom: 10px; }
+  .readout div { }
+  .readout .lbl { display: block; margin-bottom: 2px; }
+  .readout b { font-family: var(--mono); font-size: 16px; font-weight: 600; display: block; line-height: 1.3; }
+
+  /* 容量构成：把清单下方的空处做成读数 */
+  .breakdown { margin: 20px 16px 0; border-top: 1px solid var(--line); padding-top: 13px; }
+  .bd-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 9px; }
+  .bd-bar { display: flex; height: 26px; border: 1px solid var(--line); }
+  .bd-bar i { display: block; height: 100%; }
+  .bd-bar .ok { background: var(--amber); }
+  .bd-bar .keep { background: #333B48; border-left: 1px solid var(--bg); }
+  .bd-bar .na { flex: 0 0 14px; border-left: 1px solid var(--bg);
+    background: repeating-linear-gradient(45deg, #1B2029, #1B2029 3px, #131821 3px, #131821 6px); }
+  .bd-legend { display: flex; gap: 26px; margin-top: 10px; flex-wrap: wrap; }
+  .bd-legend span { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--dim); }
+  .bd-legend i { width: 9px; height: 9px; display: block; }
+  .bd-legend i.ok { background: var(--amber); }
+  .bd-legend i.keep { background: #333B48; }
+  .bd-legend i.na { background: #1B2029; border: 1px solid #333B48; }
+  .bd-legend b { font-family: var(--mono); font-size: 11.5px; color: #C3CAD6; font-weight: 600; }
+
+  /* 其他 tab 的占位 */
+  .placeholder { padding: 40px 24px; }
+  .placeholder h2 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+  .placeholder p { font-size: 13px; color: var(--dim); max-width: 60ch; line-height: 1.7; }
+  .placeholder .rule { height: 1px; background: var(--line); margin: 22px 0; }
+  .placeholder ul { list-style: none; display: grid; gap: 10px; max-width: 70ch; }
+  .placeholder li { display: flex; gap: 10px; font-size: 12.5px; color: #B9C1CE; }
+  .placeholder li b { font-family: var(--mono); font-size: 11px; color: var(--amber); flex: 0 0 84px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="window">
+
+  <header class="top">
+    <div class="brand">
+      <span class="mark"><i></i></span>
+      <span class="name">CLEANSWEEP</span>
+    </div>
+    <div class="reads">
+      <div class="read"><span class="lbl">Installed</span><b>6</b></div>
+      <div class="read"><span class="lbl">Protected</span><b>2</b></div>
+      <div class="read"><span class="lbl">Total size</span><b>1.34 GB</b></div>
+      <div class="read"><span class="lbl">Selected</span><b class="hot" id="selCount">‒</b></div>
+    </div>
+    <div class="lamps">
+      <span class="lamp"><i class="on"></i>ADMIN</span>
+      <span class="lamp"><i class="on"></i>AI</span>
+      <span class="lamp"><i class="half"></i>SCAN</span>
+    </div>
+  </header>
+
+  <div class="body">
+    <nav class="rail">
+      <button class="seg active" data-tab="apps"><span class="dot"></span>软件<span class="n">6</span></button>
+      <button class="seg" data-tab="history"><span class="dot"></span>卸载历史<span class="n">1</span></button>
+      <button class="seg" data-tab="perm"><span class="dot"></span>应用权限<span class="n">3</span></button>
+      <button class="seg" data-tab="settings"><span class="dot"></span>设置<span class="n"></span></button>
+      <div class="foot">
+        <span class="lbl">System disk · C:</span>
+        <div class="scalebar">
+          <i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="h"></i><i></i><i></i><i></i>
+        </div>
+        <div class="note">已用 412 GB / 512 GB<br>6 款软件占 1.9 GB</div>
+      </div>
+    </nav>
+
+    <div class="main">
+      <!-- 软件管理 -->
+      <div id="pane-apps">
+        <div class="toolbar">
+          <div class="field">
+            <input placeholder="搜索软件名或发布者" aria-label="搜索软件">
+            <span class="k">Ctrl K</span>
+          </div>
+          <button class="btn">全部来源</button>
+          <div class="right">
+            <span class="lbl" style="margin-right:4px">6 items</span>
+            <button class="btn">刷新</button>
+          </div>
+        </div>
+
+        <div class="thead">
+          <span>软件</span><span>发布者 / 版本</span><span>来源</span><span class="num">大小</span>
+        </div>
+
+        <div class="list">
+
+          <div class="item">
+            <div class="row">
+              <span class="nm">7-Zip</span>
+              <span class="pub">Igor Pavlov · 24.09</span>
+              <span class="src">本机64</span>
+              <span class="sz">5.5 MB</span>
+            </div>
+            <div class="inspector">
+              <div class="col kv">
+                <div class="kv-block"><span class="k">安装目录</span><span class="v">C:\Program Files\7-Zip</span></div>
+                <div class="kv-row"><span class="k">卸载命令</span><span class="v">Uninstall.exe</span></div>
+              </div>
+              <div class="col verdict"><p>7-Zip 可安全卸载，卸载器会自行清理注册表项。</p></div>
+              <div class="col act"><button class="btn primary">卸载并分析残留</button></div>
+            </div>
+          </div>
+
+          <div class="item open">
+            <div class="row open">
+              <span class="nm">Google Chrome</span>
+              <span class="pub">Google LLC · 141.0.7390.55</span>
+              <span class="src">本机64</span>
+              <span class="sz">580.0 MB</span>
+            </div>
+            <div class="inspector">
+              <div class="col kv">
+                <div class="kv-block"><span class="k">安装目录</span><span class="v">C:\Program Files\Google\Chrome\Application</span></div>
+                <div class="kv-row"><span class="k">卸载命令</span><span class="v">setup.exe --uninstall</span></div>
+                <div class="kv-row"><span class="k">最近使用</span><span class="v">今天</span></div>
+              </div>
+              <div class="col verdict">
+                <div class="readout">
+                  <div><span class="lbl">AI 风险</span><b>低</b></div>
+                  <div><span class="lbl">残留预估</span><b>4 项</b></div>
+                  <div><span class="lbl">占用</span><b>580 MB</b></div>
+                </div>
+                <div class="verdict-head"><span class="pill">可卸载</span><span class="lbl">AI 已分析</span></div>
+                <p>Chrome 卸载后通常留下用户数据目录与更新缓存；书签与密码若未同步，删除后不可恢复。</p>
+              </div>
+              <div class="col act">
+                <button class="btn primary">卸载并分析残留</button>
+                <button class="btn">重新分析风险</button>
+                <span class="hint">卸载程序会先运行，随后自动扫描残留并逐项审核。</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="row">
+              <span class="nm">Microsoft Edge <span class="flag p">受保护</span></span>
+              <span class="pub">Microsoft Corporation · 141.0.3537.57</span>
+              <span class="src">本机64</span>
+              <span class="sz">410.2 MB</span>
+            </div>
+            <div class="inspector">
+              <div class="col kv">
+                <div class="kv-row"><span class="k">保护原因</span><span class="v">Windows 系统组件</span></div>
+              </div>
+              <div class="col verdict"><p>系统内置浏览器，删除会影响 Windows 组件（WebView2、帮助与搜索）。CleanSweep 不会卸载它。</p></div>
+              <div class="col act"><button class="btn" disabled style="opacity:.45;cursor:not-allowed">不可卸载</button></div>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="row">
+              <span class="nm">Microsoft Visual Studio Code</span>
+              <span class="pub">Microsoft Corporation · 1.97.0</span>
+              <span class="src">用户</span>
+              <span class="sz">371.1 MB</span>
+            </div>
+            <div class="inspector">
+              <div class="col kv">
+                <div class="kv-block"><span class="k">安装目录</span><span class="v">C:\Users\pdx\AppData\Local\Programs\Microsoft VS Code</span></div>
+              </div>
+              <div class="col verdict"><p>用户级安装。卸载后扩展与设置会残留在 <span class="mono">%APPDATA%\Code</span>。</p></div>
+              <div class="col act"><button class="btn primary">卸载并分析残留</button></div>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="row">
+              <span class="nm">Spotify Music</span>
+              <span class="pub">Spotify AB · 1.260.0.0</span>
+              <span class="src">Store</span>
+              <span class="sz">‒</span>
+            </div>
+            <div class="inspector">
+              <div class="col kv"><div class="kv-row"><span class="k">包标识</span><span class="v">SpotifyAB.SpotifyMusic_zpdnekdrzrea0</span></div></div>
+              <div class="col verdict"><p>Store 应用，通过 Remove-AppxPackage 卸载，残留主要在 LocalAppData\Packages。</p></div>
+              <div class="col act"><button class="btn primary">卸载并分析残留</button></div>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="row">
+              <span class="nm">Security Update for Windows <span class="flag p">受保护</span></span>
+              <span class="pub">Microsoft Corporation · 1</span>
+              <span class="src">本机64</span>
+              <span class="sz">‒</span>
+            </div>
+            <div class="inspector">
+              <div class="col kv"><div class="kv-row"><span class="k">保护原因</span><span class="v">系统更新项</span></div></div>
+              <div class="col verdict"><p>更新补丁条目，卸载会回退安全修复。CleanSweep 不会删除。</p></div>
+              <div class="col act"><button class="btn" disabled style="opacity:.45;cursor:not-allowed">不可卸载</button></div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="breakdown">
+          <div class="bd-head">
+            <span class="lbl">Footprint by verdict</span>
+            <span class="lbl">已知合计 1.34 GB · 2 项无大小数据</span>
+          </div>
+          <div class="bd-bar">
+            <i class="ok" style="flex:956"></i><i class="keep" style="flex:410"></i><i class="na"></i>
+          </div>
+          <div class="bd-legend">
+            <span><i class="ok"></i>可清理 <b>956.5 MB</b> · 3 款</span>
+            <span><i class="keep"></i>受保护 <b>410.2 MB</b> · 2 款</span>
+            <span><i class="na"></i>无大小数据 · 2 款</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 其他页签 -->
+      <div id="pane-history" class="hidden">
+        <div class="placeholder">
+          <h2>卸载历史</h2>
+          <p>本地 SQLite 记录，可随时重新扫描残留并让 AI 复查。应用已经卸载、名字和残留目录名对不上时，只跑固定规则会得到「0 项」这种假干净结论，所以这里同时跑 AI 推断。</p>
+          <div class="rule"></div>
+          <ul>
+            <li><b>2026-10-24</b><span>网易云音乐 · 卸载成功（退出码 0） · 最近扫描 3 项</span></li>
+            <li><b>数据位置</b><span>%APPDATA%\CleanSweep\history.db，只存本机，不上传。</span></li>
+            <li><b>删除记录</b><span>只删除本地历史，不会删除任何软件或残留文件。</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div id="pane-perm" class="hidden">
+        <div class="placeholder">
+          <h2>应用权限</h2>
+          <p>三个入口：联网控制（防火墙规则）、Store 能力（位置/摄像头/麦克风）、自启动（注册表 Run 与计划任务）。</p>
+          <div class="rule"></div>
+          <ul>
+            <li><b>联网控制</b><span>为指定程序添加或恢复 Windows 防火墙阻止规则。</span></li>
+            <li><b>Store 能力</b><span>允许 / 拒绝 / 询问，改动写入系统隐私设置。</span></li>
+            <li><b>自启动</b><span>可禁用（先备份，可恢复）或删除。</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div id="pane-settings" class="hidden">
+        <div class="placeholder">
+          <h2>设置</h2>
+          <p>AI 服务与安全策略。AI 不可用时会阻止卸载，这是硬约束而不是提示。</p>
+          <div class="rule"></div>
+          <ul>
+            <li><b>AI 状态</b><span>已启用 · DeepSeek · deepseek-flash</span></li>
+            <li><b>API Key</b><span>只保存在本机 %APPDATA%\CleanSweep\ai_config.json</span></li>
+            <li><b>超时</b><span>90 秒；推断超时会在界面上给出「重新推断」入口。</span></li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // 页签切换
+  document.querySelectorAll('.seg').forEach((seg) => {
+    seg.addEventListener('click', () => {
+      document.querySelectorAll('.seg').forEach((s) => s.classList.remove('active'));
+      seg.classList.add('active');
+      const tab = seg.dataset.tab;
+      ['apps', 'history', 'perm', 'settings'].forEach((t) => {
+        document.getElementById('pane-' + t).classList.toggle('hidden', t !== tab);
+      });
+    });
+  });
+
+  // 列表行：点开行内仪表
+  document.querySelectorAll('.item .row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const item = row.parentElement;
+      const wasOpen = item.classList.contains('open');
+      document.querySelectorAll('.item').forEach((i) => {
+        i.classList.remove('open');
+        i.querySelector('.row').classList.remove('open');
+      });
+      if (!wasOpen) {
+        item.classList.add('open');
+        row.classList.add('open');
+      }
+      document.getElementById('selCount').textContent = wasOpen ? '‒' : '1';
+    });
+  });
+</script>
+</body>
+</html>

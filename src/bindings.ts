@@ -25,7 +25,7 @@ export interface InstalledApp {
 }
 
 export type ResidualKind =
-  | "file" | "directory" | "registrykey" | "shortcut"
+  | "file" | "directory" | "registrykey" | "registryvalue" | "shortcut"
   | "service" | "scheduledtask" | "envvar";
 
 export type AiSafetyVerdict = "safe" | "caution" | "keep" | "unknown";
@@ -51,6 +51,9 @@ export interface AiAppInfo {
 
 export interface AiUninstallRisk {
   riskLevel: "low" | "medium" | "high" | "critical";
+  safeToUninstall?: boolean | null;
+  issues?: string[];
+  targets?: string[];
   dependencies: string[];
   affectedComponents: string[];
   recommendation: string;
@@ -67,6 +70,27 @@ export interface AiResidualAssessment {
   perItem: AiResidualItemVerdict[];
 }
 
+/** 扫描 + AI 推断的合并结果。 */
+export interface SuggestedResiduals {
+  items: ResidualItem[];
+  /** AI 对推断结果的一句话说明（AI 不可用时为空）。 */
+  aiSummary: string;
+  /** 其中由 AI 推断并通过校验的项数。 */
+  aiGuessed: number;
+  /** AI 推断失败的原因；此时 items 只有规则扫描结果。 */
+  aiError?: string | null;
+}
+
+/** 卸载后复查结论：这款软件算不算卸载干净。 */
+export interface AiCleanliness {
+  /** 模型未给出时按 verdict 兜底。 */
+  clean?: boolean | null;
+  verdict?: AiSafetyVerdict | null;
+  summary: string;
+  nextStep: string;
+  perItem: AiResidualItemVerdict[];
+}
+
 export interface UninstallResult {
   success: boolean;
   exitCode?: number | null;
@@ -78,6 +102,14 @@ export interface DeleteResult {
   id: string;
   success: boolean;
   message: string;
+}
+
+export interface ForceRemoveOutcome {
+  restorePoint: string | null;
+  restorePointError: string | null;
+  results: DeleteResult[];
+  entryRemoved: boolean;
+  entryError: string | null;
 }
 
 export interface AiConfig {
@@ -145,6 +177,20 @@ export interface AutostartEntry {
   disabled: boolean;
 }
 
+export interface UninstallRecord {
+  id: number;
+  app: InstalledApp;
+  /** Unix 毫秒时间戳 */
+  uninstalledAt: number;
+  success: boolean;
+  exitCode: number | null;
+  log: string;
+  residualCount: number;
+  lastScanAt: number | null;
+  residuals: ResidualItem[];
+  aiSummary: string | null;
+}
+
 export const api = {
   listInstalledApps: () => invoke<InstalledApp[]>("list_installed_apps"),
   getAiConfig: () => invoke<AiConfig>("get_ai_config"),
@@ -163,9 +209,34 @@ export const api = {
   uninstallApp: (app: InstalledApp, silent: boolean) =>
     invoke<UninstallResult>("uninstall_app", { app, silent }),
   scanResidualsFor: (app: InstalledApp) => invoke<ResidualItem[]>("scan_residuals_for", { app }),
+  listUninstallHistory: (limit?: number) =>
+    invoke<UninstallRecord[]>("list_uninstall_history", { limit: limit ?? null }),
+    scanHistoryResiduals: (id: number) =>
+      invoke<ResidualItem[]>("scan_history_residuals", { id }),
+    /**
+     * 历史页的重扫：固定规则 + AI 推断补漏。
+     * 应用已经卸载，名字和残留目录名对不上时（网易云音乐 / Netease），
+     * 只跑固定规则会得到“0 项”的假干净结论。
+     */
+    aiSuggestHistoryResiduals: (id: number) =>
+      invoke<SuggestedResiduals>("ai_suggest_history_residuals", { id }),
+  deleteUninstallHistory: (id: number) =>
+    invoke<void>("delete_uninstall_history", { id }),
   aiAssessResiduals: (app: InstalledApp, residuals: ResidualItem[]) =>
     invoke<AiResidualAssessment>("ai_assess_residuals", { app, residuals }),
+  /** 扫描残留，并让 AI 推断规则可能漏掉的位置（推断结果已逐条校验）。 */
+  aiSuggestResiduals: (app: InstalledApp) =>
+    invoke<SuggestedResiduals>("ai_suggest_residuals", { app }),
+  /** 删除后复查：AI 判断这款软件算不算卸载干净。 */
+  aiVerifyClean: (app: InstalledApp, cleaned: number, leftovers: ResidualItem[]) =>
+    invoke<AiCleanliness>("ai_verify_clean", { app, cleaned, leftovers }),
   deleteResiduals: (items: ResidualItem[]) => invoke<DeleteResult[]>("delete_residuals", { items }),
+  /**
+   * 强制删除：不运行自带卸载器，直接删掉选中项，并（可选）清理注册表卸载记录。
+   * 删除前会尝试创建系统还原点，失败原因在返回值里如实带回。
+   */
+  forceRemoveApp: (app: InstalledApp, items: ResidualItem[], removeEntry: boolean) =>
+    invoke<ForceRemoveOutcome>("force_remove_app", { app, items, removeEntry }),
   getCachedResiduals: (appId: string) => invoke<ResidualItem[]>("get_cached_residuals", { appId }),
   openInExplorer: (path: string) => invoke<void>("open_in_explorer", { path }),
   // 权限管理

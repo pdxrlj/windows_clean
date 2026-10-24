@@ -3,7 +3,6 @@
 #![allow(non_snake_case)]
 
 use serde::Deserialize;
-use std::process::Command;
 
 use crate::types::{AppSource, InstalledApp};
 
@@ -40,14 +39,7 @@ $items = @(Get-AppxPackage | Sort-Object Name | ForEach-Object {
 })
 ConvertTo-Json -InputObject $items -Depth 4
 "#;
-    let out = Command::new(crate::safety::powershell_exe())
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script,
-        ])
-        .output();
+    let out = crate::safety::powershell_command(script).output();
     let mut apps = Vec::new();
     if let Ok(out) = out {
         if out.status.success() {
@@ -128,8 +120,7 @@ Remove-AppxPackage -Package $p.PackageFullName
 "#,
         name = name
     );
-    let out = Command::new(crate::safety::powershell_exe())
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    let out = crate::safety::powershell_command(&script)
         .output()
         .map_err(|e| e.to_string())?;
     if out.status.success() {

@@ -230,37 +230,61 @@ async function main() {
     await sleep(700);
     await shot("settings-custom-mode.png");
 
-    // 8) uninstall wizard: AI pre-check → uninstall → AI residual verdict → post-check
+    // 8) uninstall wizard: 三步（确认 → 卸载与 AI 分析 → 清理与复查）
     await cdp.send("Page.navigate", { url: `${APP_URL}?view=wizard&state=wizard` });
     await setViewport(1000);
-    await sleep(2400);
+    await sleep(2600);
     await shot("wizard-intro.png");
-    // 默认展开的范围说明 + 勾选“我已了解扫描/清理范围”，才能开始卸载
-    const ack = await cdp.send("Runtime.evaluate", {
+
+    // 一步开始：后端自动串联卸载 → 扫描 → AI 分析
+    console.log("wizard start:", await click("卸载并分析残留"));
+    // 确认弹窗
+    console.log("wizard confirm:", await click("开始卸载"));
+    await sleep(4200); // uninstall 600 + scan 700 + assess 900
+    await shot("wizard-review.png");
+
+    console.log("wizard delete:", await click("清理选中的"));
+    // 清理确认弹窗
+    console.log("wizard confirm delete:", await click("确认清理"));
+    await sleep(3400); // delete 500 + 复查 700 + AI 判断是否卸载干净 900
+    await shot("wizard-done.png");
+    // “查看剩余”是 <summary>，不是 button
+    const openedLeftovers = await cdp.send("Runtime.evaluate", {
       expression: `(() => {
-        const cb = document.querySelector('.scope-ack input[type=checkbox]');
-        if (!cb) return 'NO_ACK';
-        cb.click();
-        return 'ACKED';
+        const s = [...document.querySelectorAll('summary')].find((e) => (e.textContent || '').includes('查看剩余'));
+        if (!s) return 'NOT_FOUND';
+        s.click();
+        return 'CLICKED';
       })()`,
       returnByValue: true,
     });
-    console.log("scope ack:", ack.result?.value);
-    await sleep(400);
-    await shot("wizard-scope.png");
+    console.log("wizard leftovers:", openedLeftovers.result?.value);
+    await sleep(600);
+    await shot("wizard-done-detail.png");
+    
+    // 8b) 强制删除：注册表里没有卸载程序的软件
+    await cdp.send("Page.navigate", { url: `${APP_URL}?view=wizard&state=wizard&force=1` });
+    await sleep(2400);
+    await shot("wizard-force-intro.png");
+    console.log("force start:", await click("强制删除并清理"));
+    console.log("force confirm:", await click("确认强制删除"));
+    await sleep(3600); // scan 700 + assess 900
+    await shot("wizard-force-review.png");
+    console.log("force clean:", await click("清理选中的"));
+    console.log("force confirm clean:", await click("确认清理"));
+    await sleep(4200); // force_remove 1500 + 复查 700 + AI 复查 900
+    await shot("wizard-force-done.png");
 
-    console.log("wizard start:", await click("开始卸载"));
-    // confirm dialog
-    console.log("wizard confirm:", await click("运行卸载"));
-    await sleep(1400);
-    console.log("wizard scan:", await click("扫描残留并让 AI 判断是否干净"));
-    await sleep(2600);
-    await shot("wizard-review.png");
-    console.log("wizard select safe:", await click("勾选 AI 建议可删项"));
-    console.log("wizard delete:", await click("删除选中"));
-    console.log("wizard confirm delete:", await click("全部删除"));
-    await sleep(2600);
-    await shot("wizard-done.png");
+    // 8c) AI 推断超时：保留规则结果 + 「重新推断」入口
+    await cdp.send("Page.navigate", { url: `${APP_URL}?view=wizard&state=wizard&suggest=timeout` });
+    await sleep(2400);
+    console.log("suggest start:", await click("卸载并分析残留"));
+    console.log("suggest confirm:", await click("开始卸载"));
+    await sleep(4200); // uninstall 600 + scan 700 + 推断返回 aiError + assess 900
+    await shot("wizard-suggest-timeout.png");
+    console.log("retry suggest:", await click("重新推断"));
+    await sleep(3400);
+    await shot("wizard-suggest-retry.png");
 
     // 9) software list + detail + AI analysis
     await cdp.send("Page.navigate", { url: `${APP_URL}?view=apps&state=static` });
@@ -268,7 +292,7 @@ async function main() {
     await sleep(1800);
     await shot("apps-list.png");
     await cdp.send("Runtime.evaluate", {
-      expression: `(() => { const r = document.querySelector('.list-row'); if (!r) return 'NO_ROW'; r.click(); return 'CLICKED'; })()`,
+      expression: `(() => { const r = document.querySelector('.app-row'); if (!r) return 'NO_ROW'; r.click(); return 'CLICKED'; })()`,
       returnByValue: true,
     });
     await sleep(900);
@@ -277,7 +301,30 @@ async function main() {
     await sleep(1800);
     await shot("apps-ai.png");
 
-    // 10) permissions tabs
+    // 10) 卸载历史：列表 → 详情 → 重新扫描并 AI 复查
+    await cdp.send("Page.navigate", { url: `${APP_URL}?view=history&state=static` });
+    await setViewport(1000);
+    await sleep(1600);
+    await shot("history-list.png");
+    await cdp.send("Runtime.evaluate", {
+      expression: `(() => { const el = document.querySelector('.history-row'); if (!el) return 'NO_ROW'; el.click(); return 'CLICKED'; })()`,
+      returnByValue: true,
+    });
+    await sleep(500);
+    await shot("history-detail.png");
+    console.log("history scan:", await click("重新扫描残留并 AI 判断"));
+    await sleep(3400);
+    await shot("history-ai.png");
+
+    // 10b) 假干净场景：固定规则 0 项 → AI 推断把真实残留补回来
+    await cdp.send("Page.navigate", { url: `${APP_URL}?view=history&state=static&history=clean` });
+    await sleep(1600);
+    await shot("history-clean-false.png");
+    console.log("history ai rescan:", await click("重新扫描残留并 AI 判断"));
+    await sleep(3400);
+    await shot("history-ai-refill.png");
+
+    // 11) permissions tabs
     await cdp.send("Page.navigate", { url: `${APP_URL}?view=permissions&state=static` });
     await sleep(1600);
     const appSelect = await cdp.send("Runtime.evaluate", {

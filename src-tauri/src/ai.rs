@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::{
-    AiAppInfo, AiConfig, AiResidualAssessment, AiTestResult, AiUninstallRisk, EffectiveAi,
-    EnvProbe, InstalledApp, ResidualItem,
+    AiAppInfo, AiCleanliness, AiCleanupGuess, AiConfig, AiResidualAssessment, AiTestResult,
+    AiUninstallRisk, EffectiveAi, EnvProbe, InstalledApp, ResidualItem,
 };
 
 const DEFAULT_TEMPERATURE: f32 = 0.2;
@@ -599,17 +599,35 @@ impl Client {
         app: &InstalledApp,
     ) -> Result<AiUninstallRisk, String> {
         self.ensure_enabled()?;
-        let sys = "你是 Windows 系统专家。评估卸载该软件的风险等级、可能受影响的其他组件和依赖，并给出建议。必须只返回严格 JSON（键名为 camelCase），不要输出 Markdown 代码围栏或额外说明。";
+        let sys = "你是 Windows 系统专家和安全审查员。用户准备卸载一个软件。请审查卸载命令与卸载目标，判断是否存在误删其他软件数据、系统组件、用户重要数据的风险。必须只返回严格 JSON（键名为 camelCase），不要输出 Markdown 代码围栏或额外说明。";
         let user = format!(
-            r#"软件名: {}
+            r#"请审查这次卸载：
+软件名: {}
 发布者: {}
 版本: {}
 安装目录: {}
-请只返回如下 JSON（键名必须为 camelCase）: {{"riskLevel":"low|medium|high|critical","dependencies":["string 可能依赖该软件的其他东西"],"affectedComponents":["string 受影响组件"],"recommendation":"string 建议(中文)"}}"#,
+卸载命令: {}
+静默卸载命令: {}
+预计占用: {} KB
+注册表卸载键: {}
+来源: {:?}
+
+请判断：
+1. 卸载命令是否是正常的官方卸载器，是否可能误删其他软件/系统/用户重要数据；
+2. 这次卸载会涉及哪些目标（安装目录、数据目录、注册表、服务、计划任务等）；
+3. 是否建议继续卸载（safeToUninstall: true/false）；
+4. 发现的问题/风险点（issues，没有问题返回空数组）。
+
+请只返回如下 JSON（键名必须为 camelCase）: {{"safeToUninstall":true,"riskLevel":"low|medium|high|critical","issues":["string 问题"],"targets":["string 卸载目标"],"dependencies":["string 可能依赖该软件的其他东西"],"affectedComponents":["string 受影响组件"],"recommendation":"string 建议(中文)"}}"#,
             app.display_name,
             app.publisher.as_deref().unwrap_or(""),
             app.version.as_deref().unwrap_or(""),
             app.install_location.as_deref().unwrap_or(""),
+            app.uninstall_string.as_deref().unwrap_or(""),
+            app.quiet_uninstall_string.as_deref().unwrap_or(""),
+            app.estimated_size_kb.unwrap_or(0),
+            app.registry_key.as_deref().unwrap_or(""),
+            app.source,
         );
         let raw = self
             .chat(sys, &user, ChatOpts::analysis(&self.cfg))
@@ -624,36 +642,128 @@ impl Client {
     ) -> Result<AiResidualAssessment, String> {
         self.ensure_enabled()?;
         let sys = "你是 Windows 清理专家。卸载某软件后发现了以下残留。请逐项评估每个残留是否可以安全删除（safe）/需谨慎(caution)/不建议删除(keep)/无法判断(unknown)，并说明理由。同时给出整体结论。必须只返回严格 JSON（键名为 camelCase），不要输出 Markdown 代码围栏或额外说明。";
-        let items_json: Vec<String> = residuals
-            .iter()
-            .map(|r| {
-                format!(
-                    r#"{{"id":"{}","kind":"{}","path":"{}","detail":{}}}"#,
-                    r.id,
-                    kind_str(r.kind),
-                    r.path.replace('"', "'"),
-                    r.detail
-                        .as_ref()
-                        .map(|s| format!("\"{}\"", s.replace('"', "'")))
-                        .unwrap_or_else(|| "null".into())
-                )
-            })
-            .collect();
+        let items_json = residuals_json(residuals);
         let user = format!(
             r#"已卸载软件: {} (发布者: {})
+安装目录: {}
+卸载命令: {}
+静默卸载命令: {}
+
 残留项:
 {}
 
-请只返回如下 JSON（键名必须为 camelCase）: {{"overall":"safe|caution|keep|unknown","perItem":[{{"residualId":"string","verdict":"safe|caution|keep|unknown","reason":"string"}}]}}"#,
+请结合软件信息逐项判断：这些残留是否确实属于该软件、删除后是否可能影响系统或其他软件、是否包含用户重要数据。只返回严格 JSON（键名必须为 camelCase）: {{"overall":"safe|caution|keep|unknown","perItem":[{{"residualId":"string","verdict":"safe|caution|keep|unknown","reason":"string"}}]}}"#,
             app.display_name,
             app.publisher.as_deref().unwrap_or(""),
-            items_json.join(",\n")
+            app.install_location.as_deref().unwrap_or(""),
+            app.uninstall_string.as_deref().unwrap_or(""),
+            app.quiet_uninstall_string.as_deref().unwrap_or(""),
+            items_json
         );
         let raw = self
             .chat(sys, &user, ChatOpts::analysis(&self.cfg))
             .await?;
         parse_json::<AiResidualAssessment>(&raw)
     }
+
+    /// 卸载后复查：让 AI 判断这款软件算不算卸载干净。
+    ///
+    /// `cleaned` 是刚刚成功删掉的项数，只作为上下文；`leftovers` 是复查后
+    /// 仍然存在的项目。AI 只给结论与逐项建议，不会产生新的删除目标。
+    pub async fn verify_clean(
+        &self,
+        app: &InstalledApp,
+        cleaned: usize,
+        leftovers: &[ResidualItem],
+    ) -> Result<AiCleanliness, String> {
+        self.ensure_enabled()?;
+        let sys = "你是 Windows 清理专家。用户刚卸载了一款软件并清理了部分残留，现在复查还剩下列项目。请判断这款软件是否算「已经卸载干净」。\n判定口径：剩余项若只是用户自己的配置/缓存、空的开始菜单文件夹、被系统或其他软件共享的运行库、系统会自动回收的临时文件，应判定 clean=true；若还剩该软件的程序文件、服务、驱动、计划任务、卸载注册信息，或风险无法排除，则 clean=false。\n只能根据给出的列表判断，不要臆测列表之外的路径，也不要说「可能还有其他残留」。必须只返回严格 JSON（键名 camelCase），不要输出 Markdown 代码围栏或额外说明。";
+        let user = format!(
+            r#"已卸载软件: {} (发布者: {})
+安装目录: {}
+本次已成功删除: {} 项
+复查仍存在: {} 项
+
+剩余项:
+{}
+
+请给出结论。只返回严格 JSON: {{"clean":true|false,"verdict":"safe|caution|keep|unknown","summary":"一句话结论，面向普通用户，不超过 60 字","nextStep":"一句话建议，可为空字符串","perItem":[{{"residualId":"string","verdict":"safe|caution|keep|unknown","reason":"string"}}]}}"#,
+            app.display_name,
+            app.publisher.as_deref().unwrap_or(""),
+            app.install_location.as_deref().unwrap_or(""),
+            cleaned,
+            leftovers.len(),
+            residuals_json(leftovers)
+        );
+        let raw = self
+            .chat(sys, &user, ChatOpts::analysis(&self.cfg))
+            .await?;
+        parse_json::<AiCleanliness>(&raw)
+    }
+
+    /// 让 AI 推断这款软件还会在哪些位置留下东西。
+    ///
+    /// 这是纯建议：AI 看不到本机，只能根据软件名/发布者/安装目录推测常见位置。
+    /// 返回的每一条都必须经 `residuals::verify_ai_guesses` 落地校验，
+    /// 不存在或不符合安全规则的猜法会被丢弃。
+    pub async fn suggest_cleanup(
+        &self,
+        app: &InstalledApp,
+        found: &[ResidualItem],
+    ) -> Result<AiCleanupGuess, String> {
+        self.ensure_enabled()?;
+        let sys = "你是 Windows 清理专家。用户刚卸载了一款软件，程序已经用固定规则扫过一遍。请根据你对这类软件安装行为的了解，推测它还可能在该电脑上留下哪些**具体位置**：缓存、日志、更新程序、用户配置、后台服务注册信息等。\n严格要求：\n1. 只能输出具体的绝对路径或注册表键，不能输出通配符、不能输出目录的上级目录；\n2. 路径用本机常见的 Windows 形式（如 C:\\Users\\Public\\Documents\\Foo），不要用 %APPDATA% 这类变量；\n3. 不要给出 Windows 系统目录、Microsoft 共享目录、或其他软件共用的位置；\n4. 不要重复用户已经找到的项；\n5. 不确定就不要写，宁可少给。最多 8 条。\n必须只返回严格 JSON（键名 camelCase），不要输出 Markdown 代码围栏或额外说明。";
+        let found_list = if found.is_empty() {
+            "（固定规则没找到任何残留）".to_string()
+        } else {
+            found
+                .iter()
+                .map(|r| format!("- {}", r.path))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let user = format!(
+            r#"软件: {} (发布者: {})
+版本: {}
+安装目录: {}
+卸载命令: {}
+
+固定规则已找到:
+{}
+
+请补充推测的位置。只返回严格 JSON: {{"summary":"一句话说明你推断了什么","items":[{{"path":"string","kind":"dir|file|registry","reason":"为什么认为这个位置属于该软件"}}]}}"#,
+            app.display_name,
+            app.publisher.as_deref().unwrap_or(""),
+            app.version.as_deref().unwrap_or(""),
+            app.install_location.as_deref().unwrap_or(""),
+            app.uninstall_string.as_deref().unwrap_or(""),
+            found_list
+        );
+        let raw = self
+            .chat(sys, &user, ChatOpts::analysis(&self.cfg))
+            .await?;
+        parse_json::<AiCleanupGuess>(&raw)
+    }
+}
+
+/// 把残留列表写成模型易读的 JSON 数组片段（不包裹外层方括号）。
+fn residuals_json(residuals: &[ResidualItem]) -> String {
+    residuals
+        .iter()
+        .map(|r| {
+            format!(
+                r#"{{"id":"{}","kind":"{}","path":"{}","detail":{}}}"#,
+                r.id,
+                kind_str(r.kind),
+                r.path.replace('"', "'"),
+                r.detail
+                    .as_ref()
+                    .map(|s| format!("\"{}\"", s.replace('"', "'")))
+                    .unwrap_or_else(|| "null".into())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n")
 }
 
 /// 解析模型输出（先做容错 JSON 提取）。
@@ -766,6 +876,7 @@ fn kind_str(k: crate::types::ResidualKind) -> &'static str {
         File => "file",
         Directory => "directory",
         RegistryKey => "registry_key",
+        RegistryValue => "registry_value",
         Shortcut => "shortcut",
         Service => "service",
         ScheduledTask => "task",
@@ -943,6 +1054,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_uninstall_risk_safe_to_uninstall_and_issues() {
+        // 模型可能把布尔值写成字符串；应容错为 false。
+        let r: AiUninstallRisk = serde_json::from_str(
+            r#"{"riskLevel":"medium","safeToUninstall":"false","issues":["命令可能误删"],"targets":["D:\\App"],"dependencies":[],"affectedComponents":[],"recommendation":""}"#,
+        )
+        .expect("字符串布尔值应解析");
+        assert_eq!(r.safe_to_uninstall, Some(false));
+        assert_eq!(r.issues, vec!["命令可能误删"]);
+        assert_eq!(r.targets, vec!["D:\\App"]);
+
+        // 旧模型/旧后端未返回新字段时使用默认值。
+        let minimal: AiUninstallRisk = serde_json::from_str(
+            r#"{"riskLevel":"low","dependencies":[],"affectedComponents":[],"recommendation":""}"#,
+        )
+        .expect("缺省字段应解析");
+        assert_eq!(minimal.safe_to_uninstall, None);
+        assert!(minimal.issues.is_empty());
+    }
+
+    #[test]
     fn parse_residual_assessment_aliases_and_case_insensitive_verdict() {
         let snake: AiResidualAssessment = serde_json::from_str(
             r#"{"overall":"SAFE","per_item":[{"residual_id":"r1","verdict":"Caution","reason":"可能被占用"},{"residual_id":"r2","verdict":"UNKNOWN","reason":"?"}]}"#,
@@ -964,6 +1095,33 @@ mod tests {
         let fallback: AiResidualAssessment =
             serde_json::from_str(r#"{"overall":"weird","perItem":[]}"#).unwrap();
         assert_eq!(fallback.overall, AiSafetyVerdict::Unknown);
+    }
+
+    #[test]
+    fn parse_cleanliness_tolerates_model_output() {
+        // camelCase + 布尔值
+        let a: AiCleanliness = parse_json(
+            r#"{"clean":false,"verdict":"Caution","summary":"还有服务残留","nextStep":"重启后再复查","perItem":[{"residualId":"r1","verdict":"keep","reason":"你的配置"}]}"#,
+        )
+        .expect("camelCase 应解析");
+        assert_eq!(a.clean, Some(false));
+        assert_eq!(a.verdict, Some(AiSafetyVerdict::Caution));
+        assert_eq!(a.next_step, "重启后再复查");
+        assert_eq!(a.per_item.len(), 1);
+
+        // snake_case + 字符串布尔 + 缺少 nextStep
+        let b: AiCleanliness =
+            parse_json(r#"{"clean":"true","verdict":"SAFE","summary":"干净","per_item":[]}"#)
+                .expect("snake_case 应解析");
+        assert_eq!(b.clean, Some(true));
+        assert_eq!(b.verdict, Some(AiSafetyVerdict::Safe));
+        assert_eq!(b.next_step, "");
+
+        // 模型什么都没给也不能炸：前端靠 None 不下结论
+        let c: AiCleanliness = parse_json(r#"{}"#).expect("空对象应解析");
+        assert_eq!(c.clean, None);
+        assert_eq!(c.verdict, None);
+        assert_eq!(c.per_item.len(), 0);
     }
 
     #[test]

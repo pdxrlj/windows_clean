@@ -16,7 +16,7 @@ export function PermissionsView({ apps }: { apps: InstalledApp[] }) {
   return (
     <>
       <div className="topbar">
-        <span className="title">应用权限</span>
+        <span className="h">应用权限</span>
         <div className="spacer" />
         <button className={tab === "firewall" ? "primary" : ""} onClick={() => setTab("firewall")}>联网</button>
         <button className={tab === "capability" ? "primary" : ""} onClick={() => setTab("capability")}>Store 能力</button>

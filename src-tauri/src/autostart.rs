@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::registry as reg;
 use crate::safety;
 use crate::types::ResidualItem;
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -259,7 +258,7 @@ pub fn disable(entry: &AutostartEntry) -> (bool, String) {
         if !crate::services::task_exists(&entry.name) {
             return (false, "计划任务不存在或无法验证，已拒绝操作".into());
         }
-        let o = Command::new(safety::system32_exe("schtasks.exe"))
+        let o = safety::hidden_command(safety::system32_exe("schtasks.exe"))
             .args(["/Change", "/TN", &entry.name, "/DISABLE"])
             .output();
         match o {
@@ -314,7 +313,7 @@ pub fn enable(entry: &AutostartEntry) -> (bool, String) {
         if !crate::services::task_exists(&entry.name) {
             return (false, "计划任务不存在或无法验证，已拒绝操作".into());
         }
-        let o = Command::new(safety::system32_exe("schtasks.exe"))
+        let o = safety::hidden_command(safety::system32_exe("schtasks.exe"))
             .args(["/Change", "/TN", &entry.name, "/ENABLE"])
             .output();
         match o {

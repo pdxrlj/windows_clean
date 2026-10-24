@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CleanSweep · 方向 C Linear</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    /* 三级明度：底 / 面板 / 悬浮，只靠明度差拉层次，不靠边框 */
+    --bg: #0A0A0B;
+    --panel: #111113;
+    --hover: #1A1A1D;
+    --line: #1C1C1F;
+    --line2: #232327;
+    --ink: #F0F0F3;
+    --ink2: #C9C9D1;
+    --dim: #8C8C97;
+    --amber: #E8A33D;
+    --green: #58C46B;
+    --red: #E5484D;
+    --warn: #D08C34;
+    --sans: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    background: #050506; color: var(--ink); font-family: var(--sans);
+    font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 20px;
+  }
+  .window {
+    width: 1280px; height: 800px; background: var(--bg);
+    display: flex; overflow: hidden; border: 1px solid #202024;
+  }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 7px; vertical-align: 1px; }
+  .dot.ok { background: var(--green); }
+  .dot.warn { background: var(--warn); }
+  .dot.stop { background: var(--red); }
+  .dot.idle { background: #4A4A53; }
+
+  /* ── 侧栏 240px ───────────────────────────── */
+  .side { width: 240px; flex: 0 0 auto; background: var(--bg); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  .shead { height: 52px; display: flex; align-items: center; gap: 9px; padding: 0 14px; }
+  .shead .mark {
+    width: 20px; height: 20px; border: 1.5px solid var(--amber); border-radius: 5px;
+    display: grid; place-items: center; flex: 0 0 auto;
+  }
+  .shead .mark i { width: 6px; height: 6px; background: var(--amber); border-radius: 1px; display: block; }
+  .shead .nm { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+  .shead .ver { font-size: 11px; color: var(--dim); margin-left: auto; }
+
+  .nav { padding: 6px 8px 0; }
+  .grp {
+    font-size: 11px; color: var(--dim); padding: 10px 6px 4px; letter-spacing: .04em;
+  }
+  .grp:first-child { padding-top: 4px; }
+  .btn-nav {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    height: 30px; padding: 0 7px; border: 0; border-radius: 5px;
+    background: transparent; color: #B9B9C3; font: inherit; font-size: 13px;
+    cursor: pointer; text-align: left;
+  }
+  .btn-nav:hover { background: var(--hover); color: var(--ink); }
+  .btn-nav.on { background: #17171A; color: var(--ink); }
+  .btn-nav .ic { width: 13px; height: 13px; flex: 0 0 auto; position: relative; }
+  .btn-nav .ic::before {
+    content: ""; position: absolute; inset: 1px; border: 1.3px solid currentColor;
+    border-radius: 2px; opacity: .8;
+  }
+  .btn-nav .ic.g::before { border-radius: 50%; }
+  .btn-nav .ic.line::before { border: 0; border-top: 1.3px solid currentColor; inset: 2px 1px auto; height: 1px; box-shadow: 0 4px 0 currentColor, 0 8px 0 currentColor; }
+  .btn-nav.on .ic { color: var(--amber); }
+  .btn-nav .ct { margin-left: auto; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .btn-nav.on .ct { color: #B9B9C3; }
+
+  .sfoot { margin-top: auto; border-top: 1px solid var(--line); padding: 12px 14px 14px; }
+  .sfoot .row { display: flex; align-items: center; font-size: 12px; color: var(--dim); padding: 2px 0; }
+  .sfoot .row b { color: var(--ink2); font-weight: 500; margin-left: 4px; }
+
+  /* ── 中栏 ───────────────────────────── */
+  .mid { flex: 1; min-width: 0; background: var(--panel); display: flex; flex-direction: column; }
+  .mhead { height: 52px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+  .mhead h1 { font-size: 13.5px; font-weight: 600; letter-spacing: .01em; }
+  .mhead .cnt { font-size: 11px; color: var(--dim); margin-left: 2px; }
+  .mhead .acts { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .search {
+    display: flex; align-items: center; gap: 6px; height: 30px; width: 196px;
+    padding: 0 9px; background: #17171A; border: 1px solid #26262B; border-radius: 6px;
+  }
+  .search input { background: transparent; border: 0; outline: none; color: var(--ink); font: inherit; font-size: 12.5px; flex: 1; min-width: 0; }
+  .search input::placeholder { color: #77777F; }
+  .search .key { font-family: var(--mono); font-size: 10.5px; color: #85858F; border: 1px solid #303036; border-radius: 3px; padding: 0 4px; white-space: nowrap; }
+  .ibtn {
+    height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid transparent;
+    background: transparent; color: var(--dim); font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .ibtn:hover { background: var(--hover); color: var(--ink); }
+  .ibtn.boxed { border-color: #26262B; background: #17171A; color: var(--ink2); }
+
+  .cols {
+    display: grid; grid-template-columns: 1fr 158px 74px 74px; gap: 12px;
+    padding: 0 16px; height: 28px; align-items: center; flex: 0 0 auto;
+    border-bottom: 1px solid var(--line);
+  }
+  .cols span { font-size: 11px; color: var(--dim); letter-spacing: .03em; }
+  .cols .r { text-align: right; }
+
+  .rows { flex: 1; overflow: auto; }
+  .grp-h {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 30px; padding: 0 16px; background: #0E0E10;
+    border-bottom: 1px solid var(--line); border-top: 1px solid var(--line);
+  }
+  .grp-h span { font-size: 11px; color: var(--dim); letter-spacing: .04em; }
+  .grp-h span:last-child { color: #8A8A94; }
+  .grp-h:first-child { border-top: 0; }
+  .r-row {
+    display: grid; grid-template-columns: 1fr 158px 74px 74px; gap: 12px;
+    padding: 0 16px; height: 44px; align-items: center; cursor: pointer;
+    border-bottom: 1px solid #191919; position: relative;
+  }
+  .r-row:hover { background: #17171A; }
+  .r-row.sel { background: #1F1F24; }
+  .r-row.sel::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--amber); }
+  .r-row .nm { display: flex; align-items: center; font-size: 13px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .r-row.sel .nm { color: var(--ink); }
+  .r-row .pb { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .r-row .src { font-size: 12px; color: var(--dim); }
+  .r-row .sz { font-size: 12px; color: var(--ink2); text-align: right; font-variant-numeric: tabular-nums; }
+  .r-row .sz.na { color: #8A8A94; }
+
+  .endmark { text-align: center; font-size: 11px; color: #8A8A94; padding: 18px 0 22px; }
+
+  .mfoot {
+    height: 30px; flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+    padding: 0 16px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--dim);
+  }
+  .mfoot b { color: var(--ink2); font-weight: 500; }
+
+  /* ── 右属性栏 320px ───────────────────────────── */
+  .detail {
+    width: 320px; flex: 0 0 auto; background: var(--bg); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 18px 18px 16px; overflow: auto;
+  }
+  .dhead { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  #pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .dname { font-size: 15px; font-weight: 600; letter-spacing: .01em; line-height: 1.35; }
+  .dsub { font-size: 12px; color: var(--dim); margin-top: 3px; }
+  .dbody { padding-top: 14px; }
+  .p { margin-bottom: 12px; }
+  .p .k { display: block; font-size: 11px; color: var(--dim); margin-bottom: 3px; letter-spacing: .02em; }
+  .p .v { display: block; font-size: 13px; color: var(--ink); }
+  .p .v.mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink2); line-height: 1.5; overflow-wrap: anywhere; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; background: #17171B;
+    border: 1px solid #26262B; border-radius: 3px; padding: 2px 8px; font-size: 12px; color: var(--ink2);
+  }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; display: block; }
+  .pill i.ok { background: var(--green); }
+  .pill i.warn { background: var(--warn); }
+  .pill i.stop { background: var(--red); }
+
+  .note { background: #0F0F11; border: 1px solid var(--line); border-radius: 6px; padding: 11px 12px; margin-top: 4px; }
+  .note .k { font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .note .k .ai { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; color: var(--amber); border: 1px solid #4A3418; border-radius: 3px; padding: 0 4px; }
+  .note p { font-size: 12.5px; color: var(--ink2); line-height: 1.62; }
+
+  .dacts { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 7px; }
+  .abtn {
+    height: 32px; border-radius: 6px; font: inherit; font-size: 12.5px; cursor: pointer;
+    border: 1px solid #2E2E34; background: #1A1A1D; color: var(--ink);
+  }
+  .abtn:hover { background: #212126; }
+  .abtn.primary { background: var(--amber); border-color: var(--amber); color: #17110A; font-weight: 600; }
+  .abtn.primary:hover { background: #F2B254; }
+  .abtn[disabled] { opacity: .4; cursor: not-allowed; }
+  .ahint { font-size: 11px; color: var(--dim); line-height: 1.55; margin-top: 2px; }
+
+  /* 未选中：机器体检卡 */
+  .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-top: 14px; }
+  .vit { background: #111113; border: 1px solid var(--line); border-radius: 6px; padding: 10px 11px; }
+  .vit .k { display: block; font-size: 11px; color: var(--dim); }
+  .vit b { display: block; font-size: 19px; font-weight: 600; margin-top: 2px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+  .vit b small { font-size: 11px; font-weight: 500; color: var(--dim); margin-left: 3px; letter-spacing: 0; }
+  .vit b.hot { color: var(--amber); }
+  .dsec { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .dsec .p { margin-bottom: 10px; }
+  .hardstop {
+    margin-top: 14px; border: 1px solid #3A2A14; background: #171107; border-radius: 6px;
+    padding: 10px 12px; font-size: 12px; color: #DDB87A; line-height: 1.55;
+  }
+  .hardstop b { color: var(--amber); font-weight: 600; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="window">
+
+  <!-- 侧栏 -->
+  <aside class="side">
+    <div class="shead">
+      <span class="mark"><i></i></span>
+      <span class="nm">CleanSweep</span>
+      <span class="ver">0.4</span>
+    </div>
+    <nav class="nav">
+      <div class="grp">管理</div>
+      <button class="btn-nav on"><span class="ic"></span>软件<span class="ct">6</span></button>
+      <button class="btn-nav"><span class="ic line"></span>卸载历史<span class="ct">1</span></button>
+      <div class="grp">系统</div>
+      <button class="btn-nav"><span class="ic g"></span>应用权限<span class="ct">3</span></button>
+      <button class="btn-nav"><span class="ic line"></span>设置</button>
+    </nav>
+    <div class="sfoot">
+      <div class="row"><span class="dot ok"></span>AI <b>DeepSeek</b></div>
+      <div class="row"><span class="dot ok"></span>管理员权限</div>
+      <div class="row"><span class="dot idle"></span>上次扫描 <b>10:55</b></div>
+    </div>
+  </aside>
+
+  <!-- 中栏：清单 -->
+  <main class="mid">
+    <header class="mhead">
+      <h1>已安装</h1><span class="cnt">6 项 · 2 项受保护</span>
+      <div class="acts">
+        <div class="search">
+          <input placeholder="搜索软件或发布者" aria-label="搜索软件">
+          <span class="key">Ctrl K</span>
+        </div>
+        <button class="ibtn boxed">来源</button>
+        <button class="ibtn">刷新</button>
+      </div>
+    </header>
+
+    <div class="cols">
+      <span>名称</span><span>发布者 · 版本</span><span>来源</span><span class="r">大小</span>
+    </div>
+
+    <div class="rows">
+      <div class="grp-h"><span>本机安装</span><span>4 项 · 995.5 MB</span></div>
+      <div class="r-row" data-i="0">
+        <span class="nm"><i class="dot ok"></i>7-Zip</span>
+        <span class="pb">Igor Pavlov · 24.09</span>
+        <span class="src">本机</span>
+        <span class="sz">5.5 MB</span>
+      </div>
+      <div class="r-row sel" data-i="1">
+        <span class="nm"><i class="dot ok"></i>Google Chrome</span>
+        <span class="pb">Google LLC · 141.0.7390.55</span>
+        <span class="src">本机</span>
+        <span class="sz">580.0 MB</span>
+      </div>
+      <div class="r-row" data-i="2">
+        <span class="nm"><i class="dot stop"></i>Microsoft Edge</span>
+        <span class="pb">Microsoft Corporation · 141.0.3537.57</span>
+        <span class="src">本机</span>
+        <span class="sz">410.2 MB</span>
+      </div>
+      <div class="r-row" data-i="5">
+        <span class="nm"><i class="dot stop"></i>Security Update for Windows</span>
+        <span class="pb">Microsoft Corporation · 1</span>
+        <span class="src">本机</span>
+        <span class="sz na">—</span>
+      </div>
+
+      <div class="grp-h"><span>用户级安装</span><span>1 项 · 371.1 MB</span></div>
+      <div class="r-row" data-i="3">
+        <span class="nm"><i class="dot ok"></i>Microsoft Visual Studio Code</span>
+        <span class="pb">Microsoft Corporation · 1.97.0</span>
+        <span class="src">用户</span>
+        <span class="sz">371.1 MB</span>
+      </div>
+
+      <div class="grp-h"><span>Microsoft Store</span><span>1 项 · 大小未知</span></div>
+      <div class="r-row" data-i="4">
+        <span class="nm"><i class="dot warn"></i>Spotify Music</span>
+        <span class="pb">Spotify AB · 1.260.0.0</span>
+        <span class="src">Store</span>
+        <span class="sz na">—</span>
+      </div>
+
+      <div class="endmark">已列出全部 6 项</div>
+    </div>
+
+    <footer class="mfoot">
+      <span><b>6</b> 项</span>
+      <span>已知占用 <b>1.34 GB</b></span>
+      <span>受保护 <b>2</b> 项不计入可清理</span>
+    </footer>
+  </main>
+
+  <!-- 右栏 -->
+  <aside class="detail" id="detail">
+
+    <!-- 未选中态的体检卡（A/C 方向差异所在：右栏不空白） -->
+    <div id="card">
+      <div class="dhead">
+        <div class="dname">这台机器</div>
+        <div class="dsub">没有选中软件时，这里显示整体读数</div>
+      </div>
+      <div class="vitals">
+        <div class="vit"><span class="k">已安装</span><b>6<small>款</small></b></div>
+        <div class="vit"><span class="k">可清理</span><b class="hot">956<small>MB</small></b></div>
+        <div class="vit"><span class="k">受保护</span><b>2<small>款</small></b></div>
+        <div class="vit"><span class="k">残留待审</span><b>3<small>项</small></b></div>
+      </div>
+      <div class="dsec">
+        <div class="p"><span class="k">AI 服务</span><span class="v"><span class="dot ok"></span>已启用 · DeepSeek · deepseek-flash</span></div>
+        <div class="p"><span class="k">运行权限</span><span class="v"><span class="dot ok"></span>管理员已提权</span></div>
+        <div class="p"><span class="k">上次扫描</span><span class="v"><span class="dot idle"></span>今天 10:55 · 固定规则</span></div>
+      </div>
+      <div class="hardstop">
+        <b>AI 不可用时不能卸载。</b>这是硬约束：残留判定与风险分析都依赖它，规则扫描覆盖不到中文名与英文目录名对不上的情况。
+      </div>
+      <div class="ahint" style="margin-top:14px">选中左侧任一软件，这里会换成它的判定、残留预估与操作。</div>
+    </div>
+
+    <!-- 选中态的属性栏 -->
+    <div id="pane" class="hidden">
+      <div class="dhead">
+        <div class="dname" id="pName">Google Chrome</div>
+        <div class="dsub" id="pSub">Google LLC · 141.0.7390.55</div>
+      </div>
+      <div class="dbody" id="pBody"></div>
+      <div class="dacts" id="pActs"></div>
+    </div>
+
+  </aside>
+</div>
+
+<script>
+const apps = [
+  {
+    name: '7-Zip', pub: 'Igor Pavlov · 24.09', status: ['ok', '可卸载'], tone: 'ok',
+    props: [['大小', '5.5 MB', 'mono'], ['来源', '本机 64 位', ''], ['安装目录', 'C:\\Program Files\\7-Zip', 'mono'], ['卸载命令', 'Uninstall.exe', 'mono'], ['最近使用', '3 天前', '']],
+    note: '卸载器会自行清理注册表项，通常不留残留。',
+    acts: [['primary', '卸载并分析残留', true], ['', '重新分析风险', true]],
+    hint: '卸载后会自动扫描残留并逐项审核。'
+  },
+  {
+    name: 'Google Chrome', pub: 'Google LLC · 141.0.7390.55', status: ['ok', '可卸载'], tone: 'ok',
+    props: [['大小', '580.0 MB', 'mono'], ['来源', '本机 64 位', ''], ['安装目录', 'C:\\Program Files\\Google\\Chrome\\Application', 'mono'], ['卸载命令', 'setup.exe --uninstall', 'mono'], ['最近使用', '今天', ''], ['AI 风险', '低 · 11 处关联目录', ''], ['残留预估', '4 项', '']],
+    note: '卸载后通常留下用户数据目录与更新缓存；书签与密码若未同步，删除后不可恢复。',
+    acts: [['primary', '卸载并分析残留', true], ['', '重新分析风险', true]],
+    hint: '卸载程序会先运行（退出码会记录到历史），随后自动扫描残留。'
+  },
+  {
+    name: 'Microsoft Edge', pub: 'Microsoft Corporation · 141.0.3537.57', status: ['stop', '受保护 · 不可卸载'], tone: 'stop',
+    props: [['大小', '410.2 MB', 'mono'], ['来源', '本机 64 位', ''], ['安装目录', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application', 'mono'], ['保护原因', 'Windows 系统组件', ''], ['依赖组件', 'WebView2、帮助与搜索', '']],
+    note: '系统内置浏览器，删除会影响 WebView2、帮助与搜索等组件。CleanSweep 不会卸载它，也不允许强制删除。',
+    acts: [['', '不可卸载', false]],
+    hint: '受保护项在列表里用红点标记，选中后可查看原因。'
+  },
+  {
+    name: 'Microsoft Visual Studio Code', pub: 'Microsoft Corporation · 1.97.0', status: ['ok', '可卸载'], tone: 'ok',
+    props: [['大小', '371.1 MB', 'mono'], ['来源', '用户级安装', ''], ['安装目录', 'C:\\Users\\pdx\\AppData\\Local\\Programs\\Microsoft VS Code', 'mono'], ['卸载命令', 'Uninstall.exe', 'mono'], ['最近使用', '今天', ''], ['AI 风险', '低', '']],
+    note: '用户级安装。卸载后扩展与设置会残留在 %APPDATA%\\Code，需要单独审核。',
+    acts: [['primary', '卸载并分析残留', true]],
+    hint: '用户级安装不需要管理员权限，但残留目录在两个不同位置。'
+  },
+  {
+    name: 'Spotify Music', pub: 'Spotify AB · 1.260.0.0', status: ['warn', '谨慎'], tone: 'warn',
+    props: [['大小', '—', 'mono'], ['来源', 'Microsoft Store', ''], ['包标识', 'SpotifyAB.SpotifyMusic_zpdnekdrzrea0', 'mono'], ['最近使用', '昨天', ''], ['AI 风险', '中 · 缓存目录大', '']],
+    note: 'Store 应用走 Remove-AppxPackage，卸载后残留主要在 LocalAppData\\Packages，缓存可能有几百 MB。',
+    acts: [['primary', '卸载并分析残留', true], ['', '重新分析风险', true]],
+    hint: 'Store 应用无法取得磁盘占用，大小显示为 —。'
+  },
+  {
+    name: 'Security Update for Windows', pub: 'Microsoft Corporation · 1', status: ['stop', '受保护 · 不可卸载'], tone: 'stop',
+    props: [['大小', '—', 'mono'], ['来源', '本机 64 位', ''], ['保护原因', '系统更新项', '']],
+    note: '更新补丁条目，卸载会回退安全修复。CleanSweep 会把它从列表里标出来，但不提供任何删除入口。',
+    acts: [['', '不可卸载', false]],
+    hint: ''
+  }
+];
+
+const card = document.getElementById('card');
+const pane = document.getElementById('pane');
+const pBody = document.getElementById('pBody');
+const pActs = document.getElementById('pActs');
+let current = 1;
+
+function render(i) {
+  const a = apps[i];
+  document.getElementById('pName').textContent = a.name;
+  document.getElementById('pSub').textContent = a.pub;
+
+  let html = '';
+  html += '<div class="p"><span class="k">状态</span><span class="v">' +
+    '<span class="pill"><i class="' + a.tone + '"></i>' + a.status[1] + '</span></span></div>';
+  a.props.forEach(function (p) {
+    html += '<div class="p"><span class="k">' + p[0] + '</span><span class="v ' + p[2] + '">' + p[1] + '</span></div>';
+  });
+  pBody.innerHTML = html;
+
+  pBody.insertAdjacentHTML('beforeend',
+    '<div class="note"><span class="k"><span class="ai">AI</span>判定依据</span><p>' + a.note + '</p></div>');
+
+  let acts = '';
+  a.acts.forEach(function (x) {
+    acts += '<button class="abtn ' + x[0] + '"' + (x[2] === false ? ' disabled' : '') + '>' + x[1] + '</button>';
+  });
+  if (a.hint) acts += '<div class="ahint">' + a.hint + '</div>';
+  pActs.innerHTML = acts;
+}
+
+function select(i) {
+  current = i;
+  document.querySelectorAll('.r-row').forEach(function (r) {
+    r.classList.toggle('sel', Number(r.dataset.i) === i);
+  });
+  if (i === null) {
+    card.classList.remove('hidden');
+    pane.classList.add('hidden');
+    return;
+  }
+  card.classList.add('hidden');
+  pane.classList.remove('hidden');
+  render(i);
+}
+
+document.querySelectorAll('.r-row').forEach(function (row) {
+  row.addEventListener('click', function () {
+    const i = Number(row.dataset.i);
+    // 再点一次取消选中 → 右栏回到体检卡
+    select(i === current ? null : i);
+  });
+});
+
+if (location.hash === '#empty') select(null); else select(current);
+</script>
+</body>
+</html>

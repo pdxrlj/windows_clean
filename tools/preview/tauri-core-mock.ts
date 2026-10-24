@@ -342,7 +342,95 @@ const WIZARD_APP = {
 };
 
 export function previewWizardApp() {
+  // ?force=1：演示“注册表里没有卸载程序”的强制删除流程。
+  if (typeof location !== "undefined" && /[?&]force=1/.test(location.search)) {
+    return {
+      ...WIZARD_APP,
+      id: "RegistryUser::DemoStub",
+      displayName: "DemoStub",
+      uninstallString: null,
+      quietUninstallString: null,
+      registryKey: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\DemoStub",
+    };
+  }
   return WIZARD_APP;
+}
+
+// 卸载历史 mock：用于预览“卸载历史 / 重新扫描残留 / AI 复查”页面。
+let historyRecords = [
+  {
+    id: 1,
+    app: WIZARD_APP,
+    uninstalledAt: Date.now() - 1000 * 60 * 60 * 26,
+    success: true,
+    exitCode: 0,
+    log: "卸载程序已结束（退出码 0）\n等待应用进程与安装记录消失…",
+    residualCount: WIZARD_RESIDUALS.length,
+    lastScanAt: Date.now() - 1000 * 60 * 20,
+    residuals: WIZARD_RESIDUALS,
+    aiSummary: "发现 6 项残留，大部分为可安全删除的应用专属数据。",
+  },
+  {
+    id: 2,
+    app: {
+      ...WIZARD_APP,
+      id: "RegistryMachine::OldTool",
+      displayName: "OldTool",
+      publisher: "Old Vendor",
+      version: "1.4.0",
+      installLocation: "C:\\Program Files\\OldTool",
+    },
+    uninstalledAt: Date.now() - 1000 * 60 * 60 * 24 * 6,
+    success: true,
+    exitCode: 0,
+    log: "退出码 0",
+    residualCount: 0,
+    lastScanAt: null,
+    residuals: [],
+    aiSummary: null,
+  },
+];
+
+// 历史页演示：应用已卸载，显示名是中文（网易云音乐），残留目录用的是
+// 厂商英文名（Netease），固定规则一条都匹配不到，只有 AI 推断能找回来。
+const HISTORY_AI_RESIDUALS = [
+  {
+    id: "ai:dir:D:\\software\\CloudMusic",
+    kind: "directory",
+    path: "D:\\software\\CloudMusic",
+    display: "安装目录: D:\\software\\CloudMusic",
+    detail: "注册表未登记安装目录，从 DisplayIcon 反推",
+    sizeBytes: 320_000_000,
+    inUse: false,
+  },
+  {
+    id: "ai:dir:C:\\Users\\preview\\AppData\\Local\\Netease\\CloudMusic",
+    kind: "directory",
+    path: "C:\\Users\\preview\\AppData\\Local\\Netease\\CloudMusic",
+    display: "C:\\Users\\preview\\AppData\\Local\\Netease\\CloudMusic",
+    detail: "缓存与播放记录，AI 推断",
+    sizeBytes: 214_000_000,
+    inUse: false,
+  },
+  {
+    id: "ai:reg:HKCU:SOFTWARE\\Netease\\CloudMusic",
+    kind: "registrykey",
+    path: "HKCU\\SOFTWARE\\Netease\\CloudMusic",
+    display: "HKCU\\SOFTWARE\\Netease\\CloudMusic",
+    detail: "厂商级用户设置键，AI 推断",
+    sizeBytes: null,
+    inUse: false,
+  },
+];
+
+// ?history=clean：模拟“历史页显示 0 项残留”。
+// 用来演示“未发现残留”与“可能漏报”的区别，以及 AI 推断补漏。
+if (typeof location !== "undefined" && /[?&]history=clean/.test(location.search)) {
+  historyRecords[0] = {
+    ...historyRecords[0],
+    residuals: [] as typeof historyRecords[0]["residuals"],
+    residualCount: 0,
+  };
 }
 
 
@@ -412,6 +500,13 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
       const name = (args?.app as { displayName?: string } | undefined)?.displayName ?? "该软件";
       return {
         riskLevel: "medium",
+        safeToUninstall: true,
+        issues: [],
+        targets: [
+          "C:\\Program Files\\DemoApp（安装目录）",
+          "HKCU\\SOFTWARE\\DemoApp（注册表）",
+          "DemoApp 自动更新服务与计划任务",
+        ],
         dependencies: ["其他程序可能共享的运行库"],
         affectedComponents: [`${name} 的自动更新服务`, "正在运行的实例"],
         recommendation: `${name} 可以卸载。卸载前建议关闭正在运行的程序，并确认没有其他软件依赖它的自动更新服务。`,
@@ -430,23 +525,149 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
 
     case "scan_residuals_for": {
       await delay(700);
-      return (wizardDeleted ? [] : WIZARD_RESIDUALS) as unknown as T;
+      // 删除后仍留 2 项，用来演示“AI 判断是否卸载干净”。
+      return (wizardDeleted
+        ? [WIZARD_RESIDUALS[4], WIZARD_RESIDUALS[2]]
+        : WIZARD_RESIDUALS) as unknown as T;
+    }
+
+    case "ai_suggest_residuals": {
+      await delay(1100);
+      if (state === "fail") throw "AI 未启用。请在设置中启用 AI 后再试。";
+      const base = wizardDeleted ? [WIZARD_RESIDUALS[4], WIZARD_RESIDUALS[2]] : WIZARD_RESIDUALS;
+      // ?suggest=timeout：模拟“AI 推断超时”，只剩固定规则结果 + 重试入口
+      if (typeof location !== "undefined" && /[?&]suggest=timeout/.test(location.search)) {
+        return {
+          items: WIZARD_RESIDUALS,
+          aiSummary: "",
+          aiGuessed: 0,
+          aiError:
+            "请求超时（90 秒）：请检查网络/代理，或在高级设置中增大超时时间。",
+        } as unknown as T;
+      }
+      // 模拟“AI 推断出固定规则漏掉的位置”（真实实现会逐条校验后才保留）
+      const guessed = [
+        {
+          id: "ai:dir:C:\\Users\\preview\\AppData\\Local\\DemoApp\\Cache",
+          kind: "directory",
+          path: "C:\\Users\\preview\\AppData\\Local\\DemoApp\\Cache",
+          display: "C:\\Users\\preview\\AppData\\Local\\DemoApp\\Cache",
+          detail: "更新程序的缓存目录，固定规则容易漏掉。",
+          sizeBytes: 810_000,
+          inUse: false,
+        },
+        {
+          id: "ai:reg:HKCU:SOFTWARE\\DemoVendor\\DemoApp",
+          kind: "registrykey",
+          path: "HKCU\\SOFTWARE\\DemoVendor\\DemoApp",
+          display: "HKCU\\SOFTWARE\\DemoVendor\\DemoApp",
+          detail: "厂商级的用户设置键，不在 DemoApp 卸载键下面。",
+          sizeBytes: null,
+          inUse: false,
+        },
+      ];
+      return {
+        items: wizardDeleted ? base : [...base, ...guessed],
+        aiSummary: "这类软件通常会在 LocalAppData 留一份更新缓存，并在厂商键下写用户设置。",
+        aiGuessed: wizardDeleted ? 0 : guessed.length,
+        aiError: null,
+      } as unknown as T;
+    }
+
+    case "ai_suggest_history_residuals": {
+      await delay(1500);
+      const id = (args?.id as number | undefined) ?? 0;
+      const rec = historyRecords.find((r) => r.id === id);
+      if (!rec) {
+        return { items: [], aiSummary: "", aiGuessed: 0, aiError: null } as unknown as T;
+      }
+      // ?suggest=timeout：AI 推断超时，只剩 0 项结果 + 诚实提示
+      if (typeof location !== "undefined" && /[?&]suggest=timeout/.test(location.search)) {
+        return {
+          items: [],
+          aiSummary: "",
+          aiGuessed: 0,
+          aiError: "请求超时（90 秒）：请检查网络/代理，或在高级设置中增大超时时间。",
+        } as unknown as T;
+      }
+      const items = HISTORY_AI_RESIDUALS;
+      rec.residuals = items as typeof rec.residuals;
+      rec.residualCount = items.length;
+      rec.lastScanAt = Date.now();
+      return {
+        items,
+        aiSummary: "软件显示名是中文，残留目录用的是厂商英文名，固定规则匹配不到。",
+        aiGuessed: items.length,
+        aiError: null,
+      } as unknown as T;
     }
 
     case "ai_assess_residuals": {
       await delay(900);
       if (state === "fail") throw "AI 未启用。请在设置中启用 AI 后再试。";
+      const items =
+        (args?.residuals as Array<{ id: string }> | undefined) ?? WIZARD_RESIDUALS;
       return {
         overall: "caution",
-        perItem: WIZARD_RESIDUALS.map((r, i) => ({
-          residualId: r.id,
-          verdict: i === 1 ? "caution" : "safe",
-          reason:
-            i === 1
-              ? "注册表项可能仍被其他组件引用，建议谨慎删除。"
+        perItem: items.map((r) => {
+          const caution = r.id.includes("Cache") || r.id.endsWith("SOFTWARE\\DemoApp");
+          return {
+            residualId: r.id,
+            verdict: caution ? "caution" : "safe",
+            reason: caution
+              ? "可能仍被更新组件或其它程序引用，建议谨慎删除。"
               : "应用专属残留，可以安全删除。",
+          };
+        }),
+      } as unknown as T;
+    }
+
+    case "ai_verify_clean": {
+      await delay(900);
+      if (state === "fail") throw "AI 未启用。请在设置中启用 AI 后再试。";
+      const leftovers = (args?.leftovers as Array<{ id: string; kind: string }> | undefined) ?? [];
+      return {
+        clean: true,
+        verdict: "safe",
+        summary:
+          leftovers.length === 0
+            ? "复查未发现残留，软件已经卸载干净。"
+            : `剩下 ${leftovers.length} 项是你自己的使用记录和空的快捷方式，软件本身已经卸载干净。`,
+        nextStep: leftovers.length === 0 ? "" : "想彻底清空可以清理这些剩余，但不清理也不影响。",
+        perItem: leftovers.map((r) => ({
+          residualId: r.id,
+          verdict: r.kind === "shortcut" ? "safe" : "keep",
+          reason:
+            r.kind === "shortcut"
+              ? "开始菜单里的空快捷方式，删除不影响系统。"
+              : "这里保存着你的登录状态与偏好设置，保留不影响卸载是否干净。",
         })),
       } as unknown as T;
+    }
+
+    case "list_uninstall_history": {
+      await delay(300);
+      return historyRecords as unknown as T;
+    }
+
+    case "scan_history_residuals": {
+      await delay(800);
+      const id = (args?.id as number | undefined) ?? 0;
+      const rec = historyRecords.find((r) => r.id === id);
+      const items = rec ? WIZARD_RESIDUALS : [];
+      if (rec) {
+        rec.residuals = items as typeof rec.residuals;
+        rec.residualCount = items.length;
+        rec.lastScanAt = Date.now();
+      }
+      return items as unknown as T;
+    }
+
+    case "delete_uninstall_history": {
+      await delay(300);
+      const id = (args?.id as number | undefined) ?? 0;
+      historyRecords = historyRecords.filter((r) => r.id !== id);
+      return undefined as unknown as T;
     }
 
     case "delete_residuals": {
@@ -458,6 +679,20 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
         success: true,
         message: "已删除",
       })) as unknown as T;
+    }
+
+    case "force_remove_app": {
+      // 模拟：建还原点 900 + 逐项删除 600
+      await delay(1500);
+      wizardDeleted = true;
+      const items = (args?.items as Array<{ id: string }> | undefined) ?? [];
+      return {
+        restorePoint: "已创建系统还原点",
+        restorePointError: null,
+        results: items.map((it) => ({ id: it.id, success: true, message: "已删除" })),
+        entryRemoved: Boolean(args?.removeEntry),
+        entryError: null,
+      } as unknown as T;
     }
 
     // ===== 软件列表 / 权限页 mock =====

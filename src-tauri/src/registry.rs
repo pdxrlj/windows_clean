@@ -318,3 +318,96 @@ pub fn list_subkeys(root: &str, path: &str) -> Vec<String> {
         Err(_) => vec![],
     }
 }
+
+/// 删除注册表里的“卸载”条目（软件本体已不在，程序列表里却还留着一条）。
+///
+/// 这是全项目唯一允许触碰 `...\CurrentVersion\Uninstall` 的操作，所以校验很严：
+/// 1. 必须能按 id 从**当前枚举**里找到（拒绝前端伪造或过期条目）；
+/// 2. 路径必须与枚举结果完全一致，且只允许三个官方 Uninstall 根下的一层子键；
+/// 3. 键里的 DisplayName 必须与枚举结果一致（防止扫描后被别的程序改写）。
+pub fn delete_uninstall_entry(app: &InstalledApp) -> Result<(), String> {
+    let real = enumerate_registry_apps()
+        .into_iter()
+        .find(|a| a.id == app.id)
+        .ok_or_else(|| "注册表里已经没有这条卸载记录，无需清理".to_string())?;
+    if real.is_protected {
+        return Err("受保护的系统组件，不允许删除卸载记录".into());
+    }
+    let root = match real.source {
+        AppSource::RegistryUser => "HKCU",
+        AppSource::RegistryMachine64 | AppSource::RegistryMachine32 => "HKLM",
+        _ => return Err("该条目不是注册表来源，没有卸载记录可清理".into()),
+    };
+    let full = real
+        .registry_key
+        .clone()
+        .ok_or_else(|| "该条目没有卸载记录路径".to_string())?;
+    validate_uninstall_entry_shape(&full)?;
+
+    let display = get_value(root, &full, "DisplayName").unwrap_or_default();
+    if display.trim().is_empty() || display.trim() != real.display_name.trim() {
+        return Err("卸载记录的 DisplayName 与预期不一致，已拒绝删除".into());
+    }
+
+    let (parent, sub) = full
+        .rsplit_once('\\')
+        .ok_or_else(|| "卸载记录路径格式异常".to_string())?;
+    let key = match root {
+        "HKCU" => CURRENT_USER,
+        "HKLM" => LOCAL_MACHINE,
+        _ => unreachable!(),
+    };
+    key.create(parent)
+        .and_then(|k| k.remove_tree(sub))
+        .map_err(|e| format!("删除卸载记录失败：{}", e))
+}
+
+/// 卸载记录只允许落在三个固定根下的一层子键。
+fn validate_uninstall_entry_shape(full: &str) -> Result<(), String> {
+    const ROOTS: &[&str] = &[
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    ];
+    let norm = full.trim().replace('/', "\\");
+    let low = norm.to_ascii_lowercase();
+    for root in ROOTS {
+        let r = root.to_ascii_lowercase();
+        if let Some(rest) = low.strip_prefix(&r) {
+            // 必须还有且只有一层子键名
+            if let Some(name) = rest.strip_prefix('\\') {
+                if !name.is_empty() && !name.contains('\\') {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    Err("卸载记录路径不在允许的位置，已拒绝删除".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uninstall_entry_shape_only_accepts_official_roots() {
+        assert!(validate_uninstall_entry_shape(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Foo"
+        )
+        .is_ok());
+        assert!(validate_uninstall_entry_shape(
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Foo"
+        )
+        .is_ok());
+        // 根本身、多层子键、其他位置一律不允许
+        assert!(validate_uninstall_entry_shape(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+        )
+        .is_err());
+        assert!(validate_uninstall_entry_shape(
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Foo\Bar"
+        )
+        .is_err());
+        assert!(validate_uninstall_entry_shape(r"SOFTWARE\Foo").is_err());
+        assert!(validate_uninstall_entry_shape(r"SOFTWARE\Microsoft").is_err());
+    }
+}

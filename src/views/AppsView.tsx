@@ -12,37 +12,52 @@ import { UninstallWizard } from "./UninstallWizard";
 
 type Filter = "all" | "user" | "machine" | "store" | "system";
 
-export function AppsView() {
-  const [apps, setApps] = useState<InstalledApp[]>([]);
-  const [loading, setLoading] = useState(true);
+/** 行高固定 44px，尺寸列只放得下一次读数，单位保持短。 */
+function formatSize(kb?: number | null) {
+  if (!kb) return "—";
+  if (kb >= 1024 * 1024) return `${(kb / 1024 / 1024).toFixed(2)} GB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+export function AppsView({
+  apps,
+  loading,
+  onRefresh,
+}: {
+  apps: InstalledApp[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [selected, setSelected] = useState<InstalledApp | null>(null);
+  // 展开行的 id 由这一层持有：列表是单列平铺，同一时刻只展开一个仪表。
+  const [openId, setOpenId] = useState<string | null>(null);
   const [wizard, setWizard] = useState<InstalledApp | null>(null);
   const [aiInfo, setAiInfo] = useState<AiAppInfo | null>(null);
   const [aiRisk, setAiRisk] = useState<AiUninstallRisk | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const confirm = useConfirm();
-  // 防止 AI 分析请求返回时用户已经切换到别的软件，导致 A 的结论显示在 B 上。
-  const selectedIdRef = useRef<string | null>(null);
-
-  const load = () => {
-    setLoading(true);
-    api
-      .listInstalledApps()
-      .then((list) => {
-        list.sort((a, b) => a.displayName.localeCompare(b.displayName, "zh"));
-        setApps(list);
-      })
-      .catch((e) => console.error(e))
-      .finally(() => setLoading(false));
-  };
+  const searchRef = useRef<HTMLInputElement>(null);
+  // 防止 AI 分析请求返回时用户已经展开别的软件，导致 A 的结论显示在 B 上。
+  const openIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    load();
     const unsubs: Array<() => void> = [];
     onEvent<string>("uninstall-log", () => {}).then((u) => unsubs.push(() => u()));
     return () => unsubs.forEach((f) => f());
+  }, []);
+
+  // Ctrl/⌘ + K 聚焦搜索：提示标在输入框右侧，就必须真的能按。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const filtered = useMemo(() => {
@@ -68,9 +83,19 @@ export function AppsView() {
     return l;
   }, [apps, query, filter]);
 
+  const selected = useMemo(
+    () => apps.find((a) => a.id === openId) ?? null,
+    [apps, openId]
+  );
+
   const onSelect = (app: InstalledApp) => {
-    selectedIdRef.current = app.id;
-    setSelected(app);
+    if (openIdRef.current === app.id) {
+      openIdRef.current = null;
+      setOpenId(null);
+      return;
+    }
+    openIdRef.current = app.id;
+    setOpenId(app.id);
     setAiInfo(null);
     setAiRisk(null);
   };
@@ -81,22 +106,21 @@ export function AppsView() {
     setWizard(app);
   };
 
-  const analyze = async () => {
-    if (!selected) return;
-    const target = selected;
+  const analyze = async (app: InstalledApp) => {
+    const target = app;
     setAiBusy(true);
     try {
       const [info, risk] = await Promise.all([
         api.aiAnalyzeApp(target).catch((e) => ({ err: String(e) } as any)),
         api.aiAnalyzeRisk(target).catch((e) => ({ err: String(e) } as any)),
       ]);
-      if (selectedIdRef.current !== target.id) return; // 用户已切换软件，丢弃旧结果
+      if (openIdRef.current !== target.id) return; // 用户已切换软件，丢弃旧结果
       if (info?.err) throw new Error(info.err);
       if (risk?.err) throw new Error(risk.err);
       setAiInfo(info);
       setAiRisk(risk);
     } catch (e: any) {
-      if (selectedIdRef.current !== target.id) return;
+      if (openIdRef.current !== target.id) return;
       const msg = String(e?.message ?? e);
       const ok = await confirm({
         title: "AI 分析失败",
@@ -111,15 +135,29 @@ export function AppsView() {
   };
 
   return (
-    <>
+    <div className="pane">
       <div className="topbar">
-        <input
-          style={{ width: 280 }}
-          placeholder="搜索软件名或发布者"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} style={{ width: 150 }}>
+        <div className="searchbox">
+          <span className="lbl" aria-hidden>
+            查找
+          </span>
+          <input
+            ref={searchRef}
+            placeholder="软件名或发布者"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="搜索软件名或发布者"
+          />
+          <span className="k" aria-hidden>
+            Ctrl K
+          </span>
+        </div>
+        <select
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as Filter)}
+          style={{ width: 148 }}
+          aria-label="按来源筛选"
+        >
           <option value="all">全部来源</option>
           <option value="user">当前用户</option>
           <option value="machine">本机(所有用户)</option>
@@ -127,33 +165,36 @@ export function AppsView() {
           <option value="system">系统组件</option>
         </select>
         <div className="spacer" />
-        <span className="count">{filtered.length} 项</span>
-        <button onClick={load} disabled={loading}>
-          {loading ? <span className="spinner" /> : "刷新"}
+        <span className="count">
+          {filtered.length} / {apps.length} 项
+        </span>
+        <button onClick={onRefresh} disabled={loading}>
+          {loading ? <span className="spinner" /> : "重新枚举"}
         </button>
       </div>
-      <div className="split content">
-        <div className="list-col">
-          <div className="list-head">
-            <span />
-            <span>软件</span>
-            <span>发布者 / 版本</span>
-            <span>来源</span>
-            <span style={{ textAlign: "right" }}>大小</span>
-          </div>
-          {filtered.map((a) => (
-            <div
-              key={a.id}
-              className={"list-row" + (selected?.id === a.id ? " selected" : "")}
-              onClick={() => onSelect(a)}
-            >
-              <span>
-                {a.isSystemComponent ? <span className="tag">sys</span> : null}
-              </span>
-              <span className="name">
-                {a.isProtected ? (
-                  <span className="name-line">
-                    <span className="name-text">{a.displayName}</span>
+
+      <div className="rows">
+        {/* 表头放进滚动容器内部：sticky 之后与行同宽，出现滚动条也不会错位。 */}
+        <div className="thead" aria-hidden>
+          <span>软件</span>
+          <span>发布者 / 版本</span>
+          <span>来源</span>
+          <span className="num">大小</span>
+        </div>
+        {filtered.map((a) => {
+          const open = openId === a.id;
+          return (
+            <div className="item" key={a.id}>
+              <button
+                type="button"
+                className={"app-row" + (open ? " open" : "")}
+                onClick={() => onSelect(a)}
+                aria-expanded={open}
+              >
+                <span className="nm">
+                  <span className="nm-t">{a.displayName}</span>
+                  {a.isSystemComponent && <span className="tag">sys</span>}
+                  {a.isProtected && (
                     <span
                       className="tag protected"
                       title={
@@ -164,58 +205,55 @@ export function AppsView() {
                     >
                       受保护
                     </span>
-                  </span>
-                ) : (
-                  a.displayName
-                )}
-              </span>
-              <span className="meta">
-                {a.publisher ?? "未知"} · {a.version ?? "—"}
-              </span>
-              <span className="src">{sourceLabel(a.source)}</span>
-              <span className="size">
-                {a.estimatedSizeKb ? `${(a.estimatedSizeKb / 1024).toFixed(1)} MB` : "—"}
-              </span>
+                  )}
+                </span>
+                <span className="meta">
+                  {a.publisher ?? "未知发布者"} · {a.version ?? "—"}
+                </span>
+                <span className="src">{sourceLabel(a.source)}</span>
+                <span className="size">{formatSize(a.estimatedSizeKb)}</span>
+              </button>
+              {open && selected && (
+                <AppDetail
+                  app={selected}
+                  aiInfo={aiInfo}
+                  aiRisk={aiRisk}
+                  aiBusy={aiBusy}
+                  onAnalyze={() => analyze(selected)}
+                  onUninstall={() => openUninstall(selected)}
+                />
+              )}
             </div>
-          ))}
-          {!loading && filtered.length === 0 && (
-            <div className="muted" style={{ padding: 24 }}>没有匹配的软件。</div>
-          )}
-        </div>
-        <div className="detail-col">
-          {selected ? (
-            <AppDetail
-              app={selected}
-              aiInfo={aiInfo}
-              aiRisk={aiRisk}
-              aiBusy={aiBusy}
-              onAnalyze={analyze}
-              onUninstall={() => openUninstall(selected)}
-            />
-          ) : (
-            <div className="section">
-              <div className="h">未选中</div>
-              <div className="title">从左侧选择一项</div>
-              <div className="sub">
-                CleanSweep 枚举注册表与 Store 应用。选中后可让 AI 说明软件作用与卸载风险，或启动卸载向导进行残留扫描与逐项确认删除。
-              </div>
-            </div>
-          )}
-        </div>
+          );
+        })}
+        {!loading && filtered.length > 0 && (
+          <div className="rows-end">已列出全部 {filtered.length} 项</div>
+        )}
+        {!loading && filtered.length === 0 && (
+          <div className="rows-empty">
+            {apps.length === 0
+              ? "没有枚举到已安装软件。"
+              : "没有匹配的软件，试试清空搜索或换一个来源。"}
+          </div>
+        )}
+        {loading && apps.length === 0 && (
+          <div className="rows-empty">正在枚举注册表与 Store 应用…</div>
+        )}
       </div>
+
       {wizard && (
         <UninstallWizard
           app={wizard}
           onClose={() => setWizard(null)}
           onDone={() => {
             setWizard(null);
-            load();
-            selectedIdRef.current = null;
-            setSelected(null);
+            onRefresh();
+            openIdRef.current = null;
+            setOpenId(null);
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 

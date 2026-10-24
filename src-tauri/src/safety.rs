@@ -8,6 +8,42 @@
 
 use std::fs;
 use std::path::{Component, Path, PathBuf, Prefix};
+use std::process::Command;
+
+/// 启动后台控制台程序（PowerShell / schtasks / netsh / sc / taskkill）时隐藏控制台窗口。
+///
+/// 应用本身是 Windows GUI 子系统；若直接 spawn 控制台程序，Windows 会为它创建一个
+/// 独立控制台窗口（用户看到蓝色/黑色命令框一闪而过）。CREATE_NO_WINDOW 可以避免。
+pub fn hidden_command<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// 用 Windows PowerShell 执行一段脚本，不弹出任何窗口。
+///
+/// 只靠 `CREATE_NO_WINDOW` 时，若系统把“默认终端应用”设为 Windows Terminal，
+/// conhost 会被 WT 接管，启动瞬间仍可能闪一下窗口帧；`-WindowStyle Hidden`
+/// 让 PowerShell 再隐藏一次自己的窗口，两者叠加才安静。
+///
+/// 所有 PowerShell 调用都走这里，避免再各自拼参数漏掉隐藏选项。
+pub fn powershell_command(script: &str) -> Command {
+    let mut cmd = hidden_command(powershell_exe());
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        script,
+    ]);
+    cmd
+}
 
 // ===== 基础规范化 =====
 
@@ -103,12 +139,37 @@ fn profile_roots() -> Vec<String> {
 pub fn start_menu_program_roots() -> Vec<String> {
     let mut v = Vec::new();
     for base in roaming_dirs().into_iter().chain(local_app_data_dirs()) {
-        v.push(format!("{}\\microsoft\\windows\\start menu\\programs", base));
+        let base = base.trim_end_matches('\\');
+        v.push(format!("{base}\\microsoft\\windows\\start menu\\programs"));
     }
     for base in program_data_dirs() {
-        v.push(format!("{}\\microsoft\\windows\\start menu\\programs", base));
+        let base = base.trim_end_matches('\\');
+        v.push(format!("{base}\\microsoft\\windows\\start menu\\programs"));
     }
     v
+}
+
+/// 应用快捷方式允许删除的额外位置：用户桌面 + SendTo。
+/// 与开始菜单 Programs 一样，只接受这两处根下的 .lnk，其余位置的快捷方式一律拒绝。
+pub fn app_shortcut_extra_roots() -> Vec<String> {
+    let mut v = Vec::new();
+    if let Some(p) = env_norm("USERPROFILE") {
+        v.push(format!("{}\\desktop", p.trim_end_matches('\\')));
+    }
+    for base in roaming_dirs() {
+        v.push(format!("{}\\microsoft\\windows\\sendto", base.trim_end_matches('\\')));
+    }
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// 快捷方式删除的全部合法根（开始菜单 Programs + 桌面 + SendTo）。
+pub fn allowed_shortcut_roots() -> Vec<String> {
+    start_menu_program_roots()
+        .into_iter()
+        .chain(app_shortcut_extra_roots())
+        .collect()
 }
 
 /// 这些目录本身（整目录）绝不允许作为删除目标。
@@ -275,16 +336,14 @@ fn validate_delete_path_shape(path: &str, kind: TargetKind) -> Result<(), String
             }
         }
     }
-    // 快捷方式只允许开始菜单 Programs 下的 .lnk
+    // 快捷方式只允许开始菜单 Programs / 桌面 / SendTo 下的 .lnk
     if kind == TargetKind::Shortcut {
         if !n.ends_with(".lnk") {
             return Err("快捷方式项必须是 .lnk 文件".into());
         }
-        let in_start_menu = start_menu_program_roots()
-            .iter()
-            .any(|r| is_under(&n, r));
-        if !in_start_menu {
-            return Err("快捷方式不在开始菜单 Programs 目录内，已拒绝".into());
+        let in_allowed = allowed_shortcut_roots().iter().any(|r| is_under(&n, r));
+        if !in_allowed {
+            return Err("快捷方式不在开始菜单/桌面/SendTo 目录内，已拒绝".into());
         }
     }
     Ok(())
@@ -338,6 +397,15 @@ pub fn validate_registry_delete_path(root: &str, path: &str) -> Result<(), Strin
     }
     if segs[0] != "software" {
         return Err("只允许清理 SOFTWARE 下的应用残留项".into());
+    }
+    // WOW6432Node 是 32 位程序的重定向容器：
+    // - HKCU 下它本身就是一整个系统容器，删了会弄丢所有 32 位程序的用户设置；
+    // - HKLM 下只允许它作为第 2 段出现（SOFTWARE\WOW6432Node\厂商\应用）。
+    if let Some(pos) = segs.iter().position(|s| s == "wow6432node") {
+        let legitimate = root == "HKLM" && pos == 1;
+        if !legitimate {
+            return Err("注册表路径命中 WOW6432Node 重定向容器，已拒绝".into());
+        }
     }
     // 系统级子树：绝对保护
     for s in &segs {
@@ -995,6 +1063,26 @@ mod tests {
         assert!(!valid(r"D:\", TargetKind::Directory));
         assert!(valid(r"C:\Program Files\SomeApp", TargetKind::Directory));
         assert!(valid(r"D:\Games\SomeApp", TargetKind::Directory));
+    }
+
+    /// WOW6432Node 是 32 位程序的重定向容器：
+    /// 删掉 HKCU 下的它会让所有 32 位程序丢失用户设置。
+    #[test]
+    fn rejects_wow6432node_container() {
+        assert!(validate_registry_delete_path("HKCU", r"SOFTWARE\Wow6432Node").is_err());
+        assert!(validate_registry_delete_path("HKCU", r"SOFTWARE\Wow6432Node\Netease").is_err());
+        assert!(validate_registry_delete_path("HKLM", r"SOFTWARE\WOW6432Node").is_err());
+        assert!(validate_registry_delete_path("HKLM", r"SOFTWARE\WOW6432Node\Netease").is_err());
+        // 出现在非预期位置也拒绝
+        assert!(
+            validate_registry_delete_path("HKLM", r"SOFTWARE\Foo\WOW6432Node\Bar").is_err()
+        );
+        // 合法的 32 位应用专属键仍然允许
+        assert!(validate_registry_delete_path(
+            "HKLM",
+            r"SOFTWARE\WOW6432Node\Netease\CloudMusic"
+        )
+        .is_ok());
     }
 
     #[test]

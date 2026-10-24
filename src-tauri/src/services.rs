@@ -5,8 +5,6 @@
 //! - `\Microsoft\...` 下的 Windows 内置计划任务永远不作为残留，也永远不允许删除；
 //! - 删除前 `safety` 模块会再次校验，并重新查询服务/任务确认其真实身份。
 
-use std::process::Command;
-
 use serde::Deserialize;
 
 use crate::safety;
@@ -133,8 +131,8 @@ pub fn delete_service(name: &str) -> (bool, String) {
         return (false, format!("安全校验拒绝删除服务：{}", e));
     }
     // 停服务失败不阻塞删除（系统服务已被上面的校验拦下）
-    let _ = Command::new(sc_exe()).args(["stop", name]).output();
-    let o = match Command::new(sc_exe()).args(["delete", name]).output() {
+    let _ = safety::hidden_command(sc_exe()).args(["stop", name]).output();
+    let o = match safety::hidden_command(sc_exe()).args(["delete", name]).output() {
         Ok(o) => o,
         Err(e) => return (false, e.to_string()),
     };
@@ -156,6 +154,8 @@ pub fn delete_service(name: &str) -> (bool, String) {
 pub struct TaskInfo {
     pub name: String,
     pub path: String,
+    /// 任务动作的 Execute + Arguments（用于按安装路径/别名识别更新器任务）。
+    pub actions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +165,8 @@ struct PsTask {
     task_name: Option<String>,
     #[serde(default)]
     task_path: Option<String>,
+    #[serde(default)]
+    actions: Vec<String>,
 }
 
 /// 列出计划任务（递归）。返回完整任务路径（TaskPath + TaskName）。
@@ -173,12 +175,13 @@ struct PsTask {
 /// 后者在中文 Windows 上按 OEM 代码页输出，非 ASCII 任务名会变成乱码。
 pub fn list_tasks() -> Vec<TaskInfo> {
     let script = r#"$items = @(Get-ScheduledTask | ForEach-Object {
-  [PSCustomObject]@{ TaskName = $_.TaskName; TaskPath = $_.TaskPath }
+  $acts = @($_.Actions | ForEach-Object {
+    (( [string]$_.Execute + ' ' + [string]$_.Arguments ).Trim())
+  })
+  [PSCustomObject]@{ TaskName = $_.TaskName; TaskPath = $_.TaskPath; Actions = $acts }
 })
 ConvertTo-Json -InputObject $items -Depth 3"#;
-    let o = Command::new(safety::powershell_exe())
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output();
+    let o = safety::powershell_command(script).output();
     let stdout = match o {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => return vec![],
@@ -207,6 +210,7 @@ ConvertTo-Json -InputObject $items -Depth 3"#;
         out.push(TaskInfo {
             name: full.clone(),
             path: full,
+            actions: t.actions,
         });
     }
     out
@@ -214,7 +218,7 @@ ConvertTo-Json -InputObject $items -Depth 3"#;
 
 /// 任务是否真实存在（删除前二次确认）。
 pub fn task_exists(name: &str) -> bool {
-    Command::new(schtasks_exe())
+    safety::hidden_command(schtasks_exe())
         .args(["/Query", "/TN", name, "/FO", "CSV", "/NH"])
         .output()
         .map(|o| o.status.success())
@@ -232,7 +236,7 @@ pub fn delete_task(name: &str) -> (bool, String) {
     if !belongs {
         return (false, "计划任务不存在或不在系统任务列表中，已拒绝删除".into());
     }
-    let o = match Command::new(schtasks_exe())
+    let o = match safety::hidden_command(schtasks_exe())
         .args(["/Delete", "/TN", name, "/F"])
         .output()
     {
@@ -249,8 +253,15 @@ pub fn delete_task(name: &str) -> (bool, String) {
     }
 }
 
-/// 匹配服务/任务：判断其名称或二进制路径是否与该应用相关。
-fn matches_app(app_name: &str, binary_path: Option<&str>, display: &str, name: &str) -> bool {
+/// 匹配服务/任务：判断其名称、英文别名或二进制/任务命令行路径是否与该应用相关。
+fn matches_app(
+    app_name: &str,
+    binary_path: Option<&str>,
+    display: &str,
+    name: &str,
+    aliases: &[String],
+    path_hints: &[String],
+) -> bool {
     let an = norm(app_name);
     if an.len() < 2 {
         return false;
@@ -263,11 +274,26 @@ fn matches_app(app_name: &str, binary_path: Option<&str>, display: &str, name: &
         if tn == an || tn.contains(&an) || (tn.len() >= 3 && an.contains(&tn)) {
             return true;
         }
+        if aliases
+            .iter()
+            .any(|a| crate::residuals::alias_matches(&tn, a))
+        {
+            return true;
+        }
     }
-    if an.len() >= 3 {
-        if let Some(b) = binary_path {
-            let bn = norm(b);
-            if !bn.is_empty() && bn.contains(&an) {
+    if let Some(b) = binary_path {
+        let bn = b.to_lowercase();
+        if an.len() >= 3 && !bn.is_empty() && bn.contains(&an) {
+            return true;
+        }
+        // 任务/服务的命令行中引用了安装目录，或包含应用英文别名。
+        for h in path_hints {
+            if h.len() >= 4 && bn.contains(h) {
+                return true;
+            }
+        }
+        for a in aliases {
+            if a.chars().count() >= 4 && bn.contains(a) {
                 return true;
             }
         }
@@ -280,7 +306,11 @@ fn norm(s: &str) -> String {
 }
 
 /// 扫描与该应用相关的服务和计划任务，返回残留项。
-pub fn scan_for_app(app_name: &str) -> Vec<ResidualItem> {
+pub fn scan_for_app(
+    app_name: &str,
+    aliases: &[String],
+    path_hints: &[String],
+) -> Vec<ResidualItem> {
     use crate::types::{ResidualKind, ResidualItem};
     let mut out = Vec::new();
 
@@ -289,7 +319,14 @@ pub fn scan_for_app(app_name: &str) -> Vec<ResidualItem> {
         if safety::validate_service_deletion(&s.name, s.binary_path.as_deref()).is_err() {
             continue;
         }
-        if matches_app(app_name, s.binary_path.as_deref(), &s.display_name, &s.name) {
+        if matches_app(
+            app_name,
+            s.binary_path.as_deref(),
+            &s.display_name,
+            &s.name,
+            aliases,
+            path_hints,
+        ) {
             let path = s.binary_path.clone().unwrap_or_else(|| s.name.clone());
             out.push(ResidualItem {
                 id: format!("svc:{}", s.name),
@@ -309,13 +346,23 @@ pub fn scan_for_app(app_name: &str) -> Vec<ResidualItem> {
         if safety::validate_task_deletion(&t.name).is_err() {
             continue;
         }
-        if matches_app(app_name, None, &t.name, &t.name) {
+        let action_text = t.actions.join(" ");
+        let action_opt = if action_text.is_empty() {
+            None
+        } else {
+            Some(action_text.as_str())
+        };
+        if matches_app(app_name, action_opt, &t.name, &t.name, aliases, path_hints) {
             out.push(ResidualItem {
                 id: format!("task:{}", t.name),
                 kind: ResidualKind::ScheduledTask,
                 path: t.path.clone(),
                 display: format!("计划任务: {}", t.name),
-                detail: None,
+                detail: if action_text.is_empty() {
+                    None
+                } else {
+                    Some(action_text)
+                },
                 size_bytes: None,
                 in_use: false,
                 ai_verdict: None,
@@ -347,10 +394,40 @@ mod tests {
     #[test]
     fn service_matching_avoids_empty_tokens() {
         // 空显示名不能导致“匹配一切”
-        assert!(!matches_app("Some App", None, "", ""));
-        assert!(!matches_app("", None, "SomeAppSvc", "SomeAppSvc"));
-        assert!(matches_app("Some App", None, "", "SomeAppSvc"));
-        assert!(matches_app("Chrome", None, "Google Chrome Elevation", "GoogleChromeElevationService"));
+        assert!(!matches_app("Some App", None, "", "", &[], &[]));
+        assert!(!matches_app("", None, "SomeAppSvc", "SomeAppSvc", &[], &[]));
+        assert!(matches_app("Some App", None, "", "SomeAppSvc", &[], &[]));
+        assert!(matches_app(
+            "Chrome",
+            None,
+            "Google Chrome Elevation",
+            "GoogleChromeElevationService",
+            &[],
+            &[]
+        ));
+    }
+
+    #[test]
+    fn matching_uses_aliases_and_task_action_paths() {
+        let aliases = vec!["quark".to_string()];
+        // 中文显示名 + 英文更新器任务：靠别名/命令行路径命中
+        assert!(matches_app(
+            "夸克",
+            Some(r"C:\Users\me\AppData\Local\QuarkUpdater\QuarkUpdater\1.0.0.21\updater.exe --wake"),
+            "",
+            r"\QuarkUpdaterUser\QuarkUpdater\QuarkUpdaterTaskUser1.0.0.21",
+            &aliases,
+            &[]
+        ));
+        // 文件名是无关的，不能因为任务名里有 miss 而匹配
+        assert!(!matches_app(
+            "夸克",
+            Some(r"C:\Program Files\Other\other.exe"),
+            "",
+            r"\Other\UpdateTask",
+            &aliases,
+            &[]
+        ));
     }
 
     #[test]

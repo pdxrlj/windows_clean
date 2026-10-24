@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CleanSweep · 六张缩略图</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --sans: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+    --amber: #E8A33D;
+    --red: #E5484D;
+    --green: #58C46B;
+    --line: #2A2F3A;
+    --ink: #E6EAF2;
+    --dim: #98A0AF;
+  }
+  body {
+    background: #08090C;
+    color: var(--ink);
+    font-family: var(--sans);
+    padding: 30px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .head { margin-bottom: 22px; }
+  .head h1 { font-size: 17px; font-weight: 600; letter-spacing: .01em; }
+  .head p { font-size: 12px; color: var(--dim); margin-top: 5px; }
+  .sheet { display: grid; grid-template-columns: 480px 480px; gap: 26px 30px; }
+  .cell { }
+  .cap {
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--dim); margin-bottom: 7px; font-family: var(--mono);
+  }
+  .cap b { color: var(--amber); font-weight: 600; }
+  .frame {
+    width: 480px; height: 300px; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .lbl { font-size: 8px; letter-spacing: .1em; text-transform: uppercase; font-family: var(--mono); }
+  .mono { font-family: var(--mono); }
+
+  /* ───────── A · Teenage Engineering 仪器面板 ───────── */
+  .a { background: #0E1117; border: 1px solid #262C38; }
+  .a-top {
+    display: flex; align-items: flex-end; gap: 16px;
+    padding: 7px 10px 6px; border-bottom: 1px solid #262C38; background: #12161D;
+  }
+  .a-brand { font-family: var(--mono); font-size: 9px; letter-spacing: .16em; color: #7E8899; padding-bottom: 2px; }
+  .a-read { display: flex; flex-direction: column; gap: 1px; }
+  .a-read .lbl { color: #6E7889; }
+  .a-read .val { font-family: var(--mono); font-size: 13px; line-height: 1; color: var(--ink); }
+  .a-read .val.on { color: var(--amber); }
+  .a-lamps { margin-left: auto; display: flex; gap: 5px; padding-bottom: 2px; }
+  .a-lamps i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid #4A5361; }
+  .a-lamps i.on { background: var(--green); border-color: var(--green); }
+  .a-lamps i.half { background: #3A4250; border-color: #6E7889; }
+  .a-body { display: flex; flex: 1; min-height: 0; }
+  .a-rail { width: 74px; border-right: 1px solid #262C38; display: flex; flex-direction: column; }
+  .a-seg {
+    padding: 7px 8px; font-size: 10px; color: #8B94A5; border-bottom: 1px solid #1C212A;
+    border-left: 3px solid transparent;
+  }
+  .a-seg.active { color: #0E1117; background: var(--amber); border-left-color: var(--amber); font-weight: 600; }
+  .a-scale { margin-top: auto; padding: 8px; }
+  .a-scale .lbl { color: #5E6779; font-size: 7px; }
+  .a-scale .bar { display: flex; gap: 2px; margin-top: 4px; }
+  .a-scale .bar i { flex: 1; height: 9px; background: #232A36; }
+  .a-scale .bar i.on { background: #4C5668; }
+  .a-scale .bar i.hot { background: var(--amber); }
+  .a-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .a-strip { display: flex; border-bottom: 1px solid #262C38; }
+  .a-strip div { padding: 6px 9px; border-right: 1px solid #1C212A; }
+  .a-strip .lbl { color: #6E7889; display: block; }
+  .a-strip .big { font-family: var(--mono); font-size: 15px; color: var(--ink); }
+  .a-list { flex: 1; overflow: hidden; }
+  .a-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 9px;
+    border-bottom: 1px solid #191E26; font-size: 10px;
+  }
+  .a-row .nm { flex: 1; color: #DDE2EC; }
+  .a-row .meta { font-family: var(--mono); font-size: 9px; color: #77808F; }
+  .a-row .tag { font-family: var(--mono); font-size: 8px; padding: 1px 4px; border: 1px solid #3A4150; color: #9AA3B2; }
+  .a-row .tag.p { border-color: #6B4A20; color: #D08C34; }
+
+  /* ───────── B · Vignelli 瑞士网格 ───────── */
+  .b { background: #101216; border: 1px solid #2A2F3A; display: flex; flex-direction: row; }
+  .b-rail {
+    width: 56px; border-right: 1px solid #2A2F3A; display: flex; flex-direction: column;
+    padding: 10px 0; gap: 2px;
+  }
+  .b-rail span { font-size: 10px; color: #8D95A4; padding: 5px 8px; letter-spacing: .04em; }
+  .b-rail span.cur { color: var(--amber); font-weight: 600; }
+  .b-main { flex: 1; padding: 12px 16px 0; display: flex; flex-direction: column; min-width: 0; }
+  .b-head { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid #2A2F3A; padding-bottom: 8px; }
+  .b-num { font-size: 46px; line-height: .82; font-weight: 600; letter-spacing: -.03em; color: var(--ink); }
+  .b-headmeta { font-size: 10px; color: #99A1B0; }
+  .b-headmeta em { font-style: normal; color: var(--amber); }
+  .b-grid { flex: 1; }
+  .b-row { display: grid; grid-template-columns: 1fr 96px 44px; gap: 10px; padding: 5px 0; border-bottom: 1px solid #1E222A; font-size: 10px; align-items: center; }
+  .b-row .nm { color: #DDE2EC; }
+  .b-row .pb { font-size: 9px; color: #7E8797; font-family: var(--mono); }
+  .b-row .sz { text-align: right; font-family: var(--mono); font-size: 9px; color: #99A1B0; }
+  .b-row .pr { color: #C08A3E; font-size: 9px; }
+  .b-foot { border-top: 1px solid #2A2F3A; padding: 5px 0; font-size: 9px; color: #6F7787; font-family: var(--mono); }
+
+  /* ───────── C · Linear ───────── */
+  .c { background: #0A0A0B; display: flex; flex-direction: row; }
+  .c-side { width: 108px; background: #0A0A0B; border-right: 1px solid #1C1C1F; padding: 9px 7px; }
+  .c-logo { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 600; margin-bottom: 12px; padding: 0 3px; }
+  .c-logo i { width: 11px; height: 11px; border: 1.5px solid var(--amber); border-radius: 2px; display: block; }
+  .c-grp { font-size: 8px; color: #6A6A72; letter-spacing: .06em; text-transform: uppercase; padding: 7px 3px 3px; }
+  .c-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 3px; font-size: 10px; color: #A9A9B4; }
+  .c-item.on { background: #1A1A1D; color: #F0F0F3; }
+  .c-item b { width: 4px; height: 4px; border-radius: 50%; background: #4A4A53; display: block; }
+  .c-item.on b { background: var(--amber); }
+  .c-list { flex: 1; min-width: 0; }
+  .c-lhead { padding: 8px 10px; border-bottom: 1px solid #1C1C1F; display: flex; align-items: center; gap: 8px; }
+  .c-lhead .t { font-size: 11px; font-weight: 600; }
+  .c-lhead .n { font-size: 9px; color: #7A7A84; font-family: var(--mono); }
+  .c-row { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border-bottom: 1px solid #151517; font-size: 10px; }
+  .c-row.sel { background: #16161A; box-shadow: inset 2px 0 0 var(--amber); }
+  .c-row .nm { flex: 1; color: #DDDDE2; }
+  .c-row .pb { font-size: 9px; color: #75757F; }
+  .c-row .dot { width: 5px; height: 5px; border-radius: 50%; background: #3E7A4C; }
+  .c-row .dot.p { background: #8A6531; }
+  .c-detail { width: 132px; border-left: 1px solid #1C1C1F; background: #0D0D0F; padding: 9px 9px; }
+  .c-dhead { font-size: 10px; font-weight: 600; margin-bottom: 2px; }
+  .c-dsub { font-size: 8px; color: #75757F; margin-bottom: 9px; }
+  .c-kv { margin-bottom: 7px; }
+  .c-kv .k { font-size: 8px; color: #6A6A72; display: block; }
+  .c-kv .v { font-size: 9px; color: #D8D8DE; font-family: var(--mono); }
+  .c-pill { display: inline-flex; align-items: center; gap: 4px; background: #17171B; border: 1px solid #26262B; padding: 2px 6px; border-radius: 3px; font-size: 8px; color: #C9C9D1; margin-top: 2px; }
+  .c-pill i { width: 4px; height: 4px; border-radius: 50%; background: var(--green); display: block; }
+
+  /* ───────── D · Zed ───────── */
+  .d { background: #0C0E12; }
+  .d-top { height: 26px; display: flex; align-items: center; gap: 10px; padding: 0 9px; border-bottom: 1px solid #262B34; }
+  .d-mark { width: 10px; height: 10px; border: 1.5px solid var(--ink); display: block; }
+  .d-tabs { display: flex; gap: 9px; margin-left: 6px; }
+  .d-tabs span { font-family: var(--mono); font-size: 9px; color: #8B93A1; }
+  .d-tabs span.on { color: var(--amber); }
+  .d-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .d-right span { font-family: var(--mono); font-size: 8px; color: #7E8697; }
+  .d-right .ok { color: var(--green); }
+  .d-body { display: flex; flex: 1; min-height: 0; }
+  .d-col { display: flex; flex-direction: column; min-width: 0; }
+  .d-col.l { flex: 1.55; border-right: 1px solid #262B34; }
+  .d-col.r { flex: 1; }
+  .d-h { display: flex; align-items: baseline; gap: 6px; padding: 6px 9px 4px; border-bottom: 1px solid #1D222A; }
+  .d-h .t { font-size: 10px; font-weight: 600; }
+  .d-h .x { font-size: 8px; color: #78808F; }
+  .d-row { display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-bottom: 1px solid #171B22; font-size: 10px; }
+  .d-row .nm { flex: 1; color: #DCE1EA; }
+  .d-row .sz { font-family: var(--mono); font-size: 8px; color: #7E8697; }
+  .d-row.sel { background: #141821; }
+  .d-kv { display: flex; justify-content: space-between; padding: 4px 9px; border-bottom: 1px solid #171B22; font-size: 9px; }
+  .d-kv .k { color: #78808F; }
+  .d-kv .v { color: #D3D9E3; font-family: var(--mono); font-size: 8.5px; }
+  .d-status {
+    height: 15px; border-top: 1px solid #262B34; display: flex; align-items: center;
+    gap: 12px; padding: 0 9px; font-family: var(--mono); font-size: 7.5px; color: #78808F;
+  }
+  .d-status .g { color: var(--green); }
+  .d-status .a { color: var(--amber); }
+
+  /* ───────── E · 新粗野主义 ───────── */
+  .e { background: #08090B; }
+  .e-top { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 2px solid #E8A33D; }
+  .e-brand { font-size: 10px; font-weight: 700; letter-spacing: .02em; }
+  .e-tab { font-size: 9px; border: 1px solid #3B4250; padding: 2px 6px; color: #9AA2B1; }
+  .e-tab.on { background: var(--amber); color: #14100A; border-color: var(--amber); font-weight: 700; }
+  .e-tiles { display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 6px; padding: 8px; }
+  .e-tile { border: 2px solid #2E3543; box-shadow: 3px 3px 0 #171B22; padding: 6px 8px; }
+  .e-tile .lbl { color: #8E97A8; }
+  .e-tile .big { font-size: 26px; line-height: 1; font-weight: 700; letter-spacing: -.02em; }
+  .e-tile.hot { background: var(--amber); border-color: var(--amber); box-shadow: 3px 3px 0 #5C3F12; }
+  .e-tile.hot .lbl, .e-tile.hot .big { color: #17110A; }
+  .e-list { margin: 0 8px; border: 2px solid #2E3543; box-shadow: 3px 3px 0 #171B22; flex: 1; overflow: hidden; }
+  .e-row { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-bottom: 1px solid #232A36; font-size: 10px; }
+  .e-row .nm { flex: 1; }
+  .e-row .box { font-size: 8px; border: 1px solid #4A5262; padding: 0 3px; color: #A6AEBC; }
+  .e-row .box.p { border-color: var(--amber); color: var(--amber); }
+
+  /* ───────── F · 宋刻本 ───────── */
+  .f { background: #E7DCC2; color: #1D1915; padding: 9px; font-family: "SimSun", "Songti SC", serif; }
+  .f-frame { border: 3px solid #241E18; padding: 3px; flex: 1; display: flex; flex-direction: column; }
+  .f-inner { border: 1px solid #241E18; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .f-head { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #241E18; padding: 4px 6px; }
+  .f-head .t { font-size: 11px; letter-spacing: .2em; }
+  .f-head .zhu { margin-left: auto; font-size: 8px; color: #9E2A1D; letter-spacing: .1em; }
+  .f-cols { display: flex; flex: 1; min-height: 0; }
+  .f-c1 { flex: 1; border-right: 1px solid #241E18; }
+  .f-c2 { width: 132px; }
+  .f-r { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-bottom: 1px solid rgba(36,30,24,.28); font-size: 9.5px; }
+  .f-r .nm { flex: 1; }
+  .f-r .mk { width: 4px; height: 4px; border-radius: 50%; background: #9E2A1D; display: block; }
+  .f-r .mk.hide { visibility: hidden; }
+  .f-r .sz { font-size: 8.5px; color: #5B4F41; font-family: var(--mono); }
+  .f-r .st { font-size: 8px; color: #6B5C4A; }
+  .f-fish { text-align: center; font-size: 7px; color: #5B4F41; border-top: 1px solid #241E18; padding: 2px; letter-spacing: .2em; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>CleanSweep · 六张方向卡缩略图</h1>
+    <p>同一份内容、同一条骨架原则下的六种结构。看清楚的是骨架，不是细节。</p>
+  </div>
+
+  <div class="sheet">
+
+    <!-- A -->
+    <div class="cell">
+      <div class="cap"><b>A</b> · Teenage Engineering — 仪器面板</div>
+      <div class="frame a">
+        <div class="a-top">
+          <div class="a-brand">CLEANSWEEP</div>
+          <div class="a-read"><span class="lbl">Installed</span><span class="val on">6</span></div>
+          <div class="a-read"><span class="lbl">Protected</span><span class="val">2</span></div>
+          <div class="a-lamps"><i class="on"></i><i class="on"></i><i class="half"></i></div>
+        </div>
+        <div class="a-body">
+          <div class="a-rail">
+            <div class="a-seg active">软件</div>
+            <div class="a-seg">历史</div>
+            <div class="a-seg">权限</div>
+            <div class="a-seg">设置</div>
+            <div class="a-scale">
+              <span class="lbl">Disk 0</span>
+              <div class="bar"><i class="on"></i><i class="on"></i><i class="on"></i><i class="hot"></i><i></i><i></i></div>
+            </div>
+          </div>
+          <div class="a-main">
+            <div class="a-strip">
+              <div><span class="lbl">Total size</span><span class="big">1.34 GB</span></div>
+              <div><span class="lbl">Selected</span><span class="big">1</span></div>
+              <div><span class="lbl">AI</span><span class="big">ON</span></div>
+            </div>
+            <div class="a-list">
+              <div class="a-row"><span class="nm">7-Zip</span><span class="meta">5.5 MB</span><span class="tag">M64</span></div>
+              <div class="a-row"><span class="nm">Google Chrome</span><span class="meta">580 MB</span><span class="tag">M64</span></div>
+              <div class="a-row"><span class="nm">Microsoft Edge</span><span class="meta">410 MB</span><span class="tag p">保护</span></div>
+              <div class="a-row"><span class="nm">Visual Studio Code</span><span class="meta">371 MB</span><span class="tag">USER</span></div>
+              <div class="a-row"><span class="nm">Spotify Music</span><span class="meta">—</span><span class="tag">STORE</span></div>
+              <div class="a-row"><span class="nm">Security Update</span><span class="meta">—</span><span class="tag p">保护</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- B -->
+    <div class="cell">
+      <div class="cap"><b>B</b> · Vignelli — 瑞士网格</div>
+      <div class="frame b">
+        <div class="b-rail">
+          <span class="cur">软件</span><span>历史</span><span>权限</span><span>设置</span>
+        </div>
+        <div class="b-main">
+          <div class="b-head">
+            <div class="b-num">6</div>
+            <div class="b-headmeta">已安装 · <em>2 项受保护</em><br>合计 1.34 GB</div>
+          </div>
+          <div class="b-grid">
+            <div class="b-row"><span class="nm">7-Zip</span><span class="pb">Igor Pavlov</span><span class="sz">5.5 MB</span></div>
+            <div class="b-row"><span class="nm">Google Chrome</span><span class="pb">Google LLC</span><span class="sz">580 MB</span></div>
+            <div class="b-row"><span class="nm">Microsoft Edge <span class="pr">受保护</span></span><span class="pb">Microsoft</span><span class="sz">410 MB</span></div>
+            <div class="b-row"><span class="nm">Visual Studio Code</span><span class="pb">Microsoft</span><span class="sz">371 MB</span></div>
+            <div class="b-row"><span class="nm">Spotify Music</span><span class="pb">Spotify AB</span><span class="sz">—</span></div>
+            <div class="b-row"><span class="nm">Security Update <span class="pr">受保护</span></span><span class="pb">Microsoft</span><span class="sz">—</span></div>
+          </div>
+          <div class="b-foot">已提权 · AI 已启用 · 扫描就绪</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- C -->
+    <div class="cell">
+      <div class="cap"><b>C</b> · Linear — 三级明度 + 属性栏</div>
+      <div class="frame c">
+        <div class="c-side">
+          <div class="c-logo"><i></i>CleanSweep</div>
+          <div class="c-grp">管理</div>
+          <div class="c-item on"><b></b>软件</div>
+          <div class="c-item"><b></b>卸载历史</div>
+          <div class="c-grp">系统</div>
+          <div class="c-item"><b></b>应用权限</div>
+          <div class="c-item"><b></b>设置</div>
+        </div>
+        <div class="c-list">
+          <div class="c-lhead"><span class="t">已安装</span><span class="n">6</span></div>
+          <div class="c-row"><span class="dot"></span><span class="nm">7-Zip</span><span class="pb">5.5 MB</span></div>
+          <div class="c-row sel"><span class="dot"></span><span class="nm">Google Chrome</span><span class="pb">580 MB</span></div>
+          <div class="c-row"><span class="dot p"></span><span class="nm">Microsoft Edge</span><span class="pb">410 MB</span></div>
+          <div class="c-row"><span class="dot"></span><span class="nm">Visual Studio Code</span><span class="pb">371 MB</span></div>
+          <div class="c-row"><span class="dot"></span><span class="nm">Spotify Music</span><span class="pb">—</span></div>
+        </div>
+        <div class="c-detail">
+          <div class="c-dhead">Google Chrome</div>
+          <div class="c-dsub">Google LLC · 141.0.7390</div>
+          <div class="c-kv"><span class="k">大小</span><span class="v">580 MB</span></div>
+          <div class="c-kv"><span class="k">来源</span><span class="v">本机 64 位</span></div>
+          <div class="c-kv"><span class="k">安装目录</span><span class="v">C:\Program Files\Google</span></div>
+          <div class="c-pill"><i></i>可卸载</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- D -->
+    <div class="cell">
+      <div class="cap"><b>D</b> · Zed — 细线分区 + 状态栏</div>
+      <div class="frame d">
+        <div class="d-top">
+          <span class="d-mark"></span>
+          <div class="d-tabs"><span class="on">软件</span><span>历史</span><span>权限</span><span>设置</span></div>
+          <div class="d-right"><span class="ok">AI ON</span><span>ADMIN</span></div>
+        </div>
+        <div class="d-body">
+          <div class="d-col l">
+            <div class="d-h"><span class="t">已安装</span><span class="x">6 项 · 2 项受保护</span></div>
+            <div class="d-row"><span class="nm">7-Zip 24.09</span><span class="sz">5.5 MB</span></div>
+            <div class="d-row sel"><span class="nm">Google Chrome</span><span class="sz">580 MB</span></div>
+            <div class="d-row"><span class="nm">Microsoft Edge</span><span class="sz">410 MB</span></div>
+            <div class="d-row"><span class="nm">Visual Studio Code</span><span class="sz">371 MB</span></div>
+            <div class="d-row"><span class="nm">Spotify Music</span><span class="sz">—</span></div>
+            <div class="d-row"><span class="nm">Security Update KB503</span><span class="sz">—</span></div>
+          </div>
+          <div class="d-col r">
+            <div class="d-h"><span class="t">Chrome</span><span class="x">Google LLC</span></div>
+            <div class="d-kv"><span class="k">版本</span><span class="v">141.0.7390</span></div>
+            <div class="d-kv"><span class="k">来源</span><span class="v">本机 64 位</span></div>
+            <div class="d-kv"><span class="k">大小</span><span class="v">580 MB</span></div>
+            <div class="d-kv"><span class="k">AI 风险</span><span class="v">低</span></div>
+            <div class="d-kv"><span class="k">状态</span><span class="v">可卸载</span></div>
+          </div>
+        </div>
+        <div class="d-status"><span class="g">✓ 管理员</span><span class="a">AI 已启用</span><span>6 项</span><span>扫描就绪</span></div>
+      </div>
+    </div>
+
+    <!-- E -->
+    <div class="cell">
+      <div class="cap"><b>E</b> · 新粗野主义 — 磁贴盘点</div>
+      <div class="frame e">
+        <div class="e-top">
+          <span class="e-brand">CleanSweep</span>
+          <span class="e-tab on">软件</span><span class="e-tab">历史</span><span class="e-tab">权限</span><span class="e-tab">设置</span>
+        </div>
+        <div class="e-tiles">
+          <div class="e-tile hot"><span class="lbl">已安装</span><div class="big">6</div></div>
+          <div class="e-tile"><span class="lbl">受保护</span><div class="big">2</div></div>
+          <div class="e-tile"><span class="lbl">可清理</span><div class="big">956<span style="font-size:10px">M</span></div></div>
+        </div>
+        <div class="e-list">
+          <div class="e-row"><span class="nm">7-Zip</span><span class="box">M64</span></div>
+          <div class="e-row"><span class="nm">Google Chrome</span><span class="box">M64</span></div>
+          <div class="e-row"><span class="nm">Microsoft Edge</span><span class="box p">保护</span></div>
+          <div class="e-row"><span class="nm">Visual Studio Code</span><span class="box">USER</span></div>
+          <div class="e-row"><span class="nm">Spotify Music</span><span class="box">STORE</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- F -->
+    <div class="cell">
+      <div class="cap"><b>F</b> · 宋刻本 — 版框 / 界栏 / 朱批</div>
+      <div class="frame f">
+        <div class="f-frame">
+          <div class="f-inner">
+            <div class="f-head"><span class="t">软件盘点</span><span class="zhu">六项 · 二为官守</span></div>
+            <div class="f-cols">
+              <div class="f-c1">
+                <div class="f-r"><span class="mk hide"></span><span class="nm">7-Zip</span><span class="sz">5.5 MB</span></div>
+                <div class="f-r"><span class="mk hide"></span><span class="nm">Google Chrome</span><span class="sz">580 MB</span></div>
+                <div class="f-r"><span class="mk"></span><span class="nm">Microsoft Edge</span><span class="sz">410 MB</span></div>
+                <div class="f-r"><span class="mk hide"></span><span class="nm">Visual Studio Code</span><span class="sz">371 MB</span></div>
+                <div class="f-r"><span class="mk hide"></span><span class="nm">Spotify Music</span><span class="sz">—</span></div>
+                <div class="f-r"><span class="mk"></span><span class="nm">Security Update</span><span class="sz">—</span></div>
+              </div>
+              <div class="f-c2">
+                <div class="f-r"><span class="nm">Chrome</span><span class="st">可删</span></div>
+                <div class="f-r"><span class="nm">Google LLC</span><span class="st">本机</span></div>
+                <div class="f-r"><span class="nm">141.0</span><span class="st">580 MB</span></div>
+                <div class="f-r"><span class="nm">风险</span><span class="st">低</span></div>
+              </div>
+            </div>
+            <div class="f-fish">下 卷 一 · 一</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
