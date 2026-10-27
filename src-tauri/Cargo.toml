@@ -1,6 +1,6 @@
 [package]
 name = "windows-clean"
-version = "0.0.5"
+version = "0.0.6"
 description = "AI-assisted Windows uninstaller and cleanup tool"
 edition = "2021"
 
