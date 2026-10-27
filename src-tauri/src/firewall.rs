@@ -31,9 +31,14 @@ struct PsRule {
 
 const RULE_PREFIX: &str = "CleanSweep_Block_";
 
+/// 比较 exe 路径时的归一化形式：去空白、统一反斜杠、忽略大小写。
+fn norm_exe(path: &str) -> String {
+    path.trim().replace('/', "\\").to_ascii_lowercase()
+}
+
 /// FNV-1a 64，用于把完整 exe 路径映射成短后缀，避免不同目录下同名 exe 的规则互相覆盖。
 fn path_hash(path: &str) -> String {
-    let normalized = path.trim().replace('/', "\\").to_ascii_lowercase();
+    let normalized = norm_exe(path);
     let mut hash: u64 = 0xcbf29ce484222325;
     for b in normalized.as_bytes() {
         hash ^= *b as u64;
@@ -77,10 +82,7 @@ pub fn is_blocked(exe: &str) -> bool {
 /// 不用 `netsh ... show rule` 是因为其输出在中文 Windows 上被本地化，
 /// 解析 "Rule Name" 会永远失败。
 fn ps_rule_script(body: &str) -> Option<String> {
-    let script = format!(
-        "$ErrorActionPreference='SilentlyContinue'\n{}\n",
-        body
-    );
+    let script = format!("$ErrorActionPreference='SilentlyContinue'\n{}\n", body);
     let out = safety::powershell_command(&script).output().ok()?;
     if !out.status.success() {
         return None;
@@ -156,8 +158,11 @@ pub fn block(exe: &str) -> (bool, String) {
         return (false, "缺少可执行文件路径".into());
     }
     let name = rule_name(exe);
-    // 先移除已有
+    // 先移除已有（同名的，以及旧版本命名/路径写法不同但程序路径相同的规则）
     let _ = remove_rule(&name);
+    if let Some(old) = find_rule_name_by_exe(exe) {
+        let _ = remove_rule(&old);
+    }
     let mut ok = true;
     let mut msgs = Vec::new();
     for (dir, _) in [("in", true), ("out", false)] {
@@ -179,7 +184,11 @@ pub fn block(exe: &str) -> (bool, String) {
             Ok(o) if o.status.success() => {}
             Ok(o) => {
                 ok = false;
-                msgs.push(format!("{}: {}", dir, String::from_utf8_lossy(&o.stderr).trim()));
+                msgs.push(format!(
+                    "{}: {}",
+                    dir,
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ));
             }
             Err(e) => {
                 ok = false;
@@ -196,19 +205,83 @@ pub fn block(exe: &str) -> (bool, String) {
 
 /// 移除阻止规则，恢复联网。
 pub fn unblock(exe: &str) -> (bool, String) {
-    let name = rule_name(exe);
+    let name = match resolve_rule_name(exe) {
+        Some(n) => n,
+        None => return (false, "未找到对应规则".into()),
+    };
     match remove_rule(&name) {
-        true => (true, format!("已恢复 {} 联网", exe)),
-        false => (false, "未找到对应规则".into()),
+        Ok(()) => (true, format!("已恢复 {} 联网", exe)),
+        Err(e) => (false, e),
     }
 }
 
-fn remove_rule(name: &str) -> bool {
-    let _ = safety::hidden_command(safety::system32_exe("netsh.exe"))
-        .args(["advfirewall", "firewall", "delete", &format!("rule name={}", name)])
-        .output();
+/// 找该 exe 对应的规则名：先按路径哈希算出的名字查；查不到再按规则里记录的
+/// 程序路径兜底（例如恢复时拿到的路径大小写/分隔符与建规则时不同）。
+fn resolve_rule_name(exe: &str) -> Option<String> {
+    let computed = rule_name(exe);
+    if rule_exists(&computed) {
+        return Some(computed);
+    }
+    find_rule_name_by_exe(exe)
+}
+
+fn find_rule_name_by_exe(exe: &str) -> Option<String> {
+    let target = norm_exe(exe);
+    if target.is_empty() {
+        return None;
+    }
+    list_managed_rules()
+        .into_iter()
+        .find(|r| norm_exe(&r.exe_path) == target)
+        .map(|r| r.name)
+}
+
+/// netsh 的 `delete rule` 参数。
+///
+/// 必须把 `rule` 和 `name=<规则名>` 分成两个参数：拼成 `"rule name=<规则名>"`
+/// 一个参数时，std::process 会因为里面含空格而给整串加引号，netsh 的分词器
+/// 不认这种写法，只会回一句 "The following command was not found"，删除静默失败。
+fn delete_args(name: &str) -> Vec<String> {
+    vec![
+        "advfirewall".into(),
+        "firewall".into(),
+        "delete".into(),
+        "rule".into(),
+        format!("name={}", name),
+    ]
+}
+
+/// 删除规则。返回真实失败原因，不要用「未找到对应规则」掩盖提权/权限问题。
+fn remove_rule(name: &str) -> Result<(), String> {
+    let out = safety::hidden_command(safety::system32_exe("netsh.exe"))
+        .args(delete_args(name))
+        .output()
+        .map_err(|e| format!("调用 netsh 失败：{}", e))?;
     // 不用 netsh 的本地化输出判断成功，改用 PowerShell 复查规则是否已消失。
-    !rule_exists(name)
+    if !rule_exists(name) {
+        return Ok(());
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let raw = if stdout.is_empty() { stderr } else { stdout };
+    Err(netsh_error(&raw))
+}
+
+/// netsh 的报错是本地化的，这里翻译成能照着做的提示。
+fn netsh_error(raw: &str) -> String {
+    let low = raw.to_ascii_lowercase();
+    if low.contains("requires elevation")
+        || raw.contains("需要提升")
+        || low.contains("access is denied")
+        || raw.contains("拒绝访问")
+    {
+        return "需要管理员权限：请以管理员身份重启 CleanSweep 后再恢复联网".into();
+    }
+    if raw.is_empty() {
+        "移除防火墙规则失败（netsh 没有输出错误信息）".into()
+    } else {
+        format!("移除防火墙规则失败：{}", raw)
+    }
 }
 
 #[cfg(test)]
@@ -220,11 +293,52 @@ mod tests {
         let a = rule_name(r"C:\Program Files\A\app.exe");
         let b = rule_name(r"C:\Program Files\B\app.exe");
         assert_ne!(a, b, "不同路径的同名 exe 不能共用规则名");
-        assert_eq!(a, rule_name(r"c:/program files/a/APP.EXE"), "大小写/斜杠归一化后应一致");
+        assert_eq!(
+            a,
+            rule_name(r"c:/program files/a/APP.EXE"),
+            "大小写/斜杠归一化后应一致"
+        );
         assert!(a.starts_with(RULE_PREFIX));
-        assert!(a
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_'));
+        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
         assert!(a.len() < 120);
+    }
+
+    /// netsh 只认 `delete rule name=X` 这种分词：任何一个参数里带空格，
+    /// std::process 就会给整串加引号，netsh 直接报「命令不存在」。
+    #[test]
+    fn delete_args_are_split_and_never_requoted() {
+        let args = delete_args("CleanSweep_Block_app_1234abcd");
+        assert_eq!(
+            args,
+            [
+                "advfirewall",
+                "firewall",
+                "delete",
+                "rule",
+                "name=CleanSweep_Block_app_1234abcd"
+            ]
+        );
+        assert!(
+            args.iter().all(|a| !a.chars().any(char::is_whitespace)),
+            "带空格的参数会被引号包住，netsh 无法解析"
+        );
+    }
+
+    #[test]
+    fn same_exe_written_differently_maps_to_one_key() {
+        let a = norm_exe(r"D:\software\youku\uninstaller.exe");
+        let b = norm_exe(r" d:/SOFTWARE/Youku/Uninstaller.EXE ");
+        assert_eq!(a, b);
+        assert_eq!(path_hash(&a), path_hash(&b));
+    }
+
+    #[test]
+    fn netsh_errors_are_humanized() {
+        assert!(
+            netsh_error("The requested operation requires elevation (Run as administrator).")
+                .contains("管理员权限")
+        );
+        assert!(netsh_error("请求的操作需要提升(作为管理员运行)。").contains("管理员权限"));
+        assert!(netsh_error("No rules match the specified criteria.").contains("No rules"));
     }
 }
