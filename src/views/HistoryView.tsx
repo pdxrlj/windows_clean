@@ -72,6 +72,16 @@ export function HistoryView() {
     [records, selectedId],
   );
 
+  // success / 退出码是卸载当时写进库里的，复审只更新残留数；
+  // 这里把「卸载器退出码」和「当前还剩多少残留」分开讲，避免被读成同件事。
+  const scanSummary = !selectedRecord
+    ? ""
+    : !selectedRecord.lastScanAt
+      ? "还没有复查过残留。"
+      : selectedRecord.residualCount === 0
+        ? `最近一次复查（${fmtTime(selectedRecord.lastScanAt)}）没有残留，无需再清理。`
+        : `最近一次复查（${fmtTime(selectedRecord.lastScanAt)}）还有 ${selectedRecord.residualCount} 项残留待清理。`;
+
   const load = async () => {
     setLoading(true);
     try {
@@ -304,7 +314,7 @@ export function HistoryView() {
           <div className="history-head">
             <span>软件</span>
             <span>卸载时间</span>
-            <span>结果</span>
+            <span>卸载结果</span>
             <span style={{ textAlign: "right" }}>残留</span>
           </div>
           {records.map((rec) => (
@@ -354,6 +364,12 @@ export function HistoryView() {
                   <span className="k">最近扫描</span>
                   <span>{fmtTime(selectedRecord.lastScanAt)}</span>
                 </div>
+                {!selectedRecord.success && (
+                  <div className="hint" style={{ marginBottom: 8 }}>
+                    「未完成」只按卸载器自己的退出码判定（本次{" "}
+                    {selectedRecord.exitCode ?? "—"}），不代表卸载没生效。是否还有残留以复查结果为准：{scanSummary}
+                  </div>
+                )}
                 <div className="row">
                   <button className="primary" onClick={() => void scan()} disabled={scanBusy}>
                     {scanBusy ? <span className="spinner" /> : null} 重新扫描残留并 AI 判断
@@ -377,11 +393,10 @@ export function HistoryView() {
                   <>
                     <div className="hint">
                       {aiGuess
-                        ? "这一轮扫描没有找到残留项。"
+                        ? "这一轮扫描没有找到残留项（安装目录、AppData、注册表、服务/任务都查过了）。"
                         : selectedRecord.lastScanAt
-                          ? "上一次扫描没有找到残留项，但那次只跑了固定规则。"
-                          : "还没有扫描过。"}
-                      点上方「重新扫描残留并 AI 判断」再查一遍（安装目录、AppData、注册表、服务/任务）。
+                          ? `上一次扫描（${fmtTime(selectedRecord.lastScanAt)}）没有找到残留项。固定规则只按名字匹配，可能漏项，建议用上方「重新扫描残留并 AI 判断」再查一遍。`
+                          : "还没有扫描过。点上方「重新扫描残留并 AI 判断」查一遍（安装目录、AppData、注册表、服务/任务）。"}
                     </div>
                     {aiGuess?.error && (
                       <div className="hint" style={{ color: "var(--warn)", marginTop: 6 }}>
